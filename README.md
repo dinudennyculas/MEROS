@@ -8,13 +8,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Sovereign Bullion & Carbon Ledger](https://img.shields.io/badge/Aesthetic-Sovereign%20Gold%20%26%20Carbon-gold)](https://github.com)
 
-**MEROS** (Greek: *μέρος* — Portion, Share & Stakeholder Allotment) is an institutional-grade financial engineering terminal built in Python (`Streamlit`, `Pandas`, `NumPy`, `Plotly`) that bridges everyday consumer curiosity with rigorous strategic finance. It transforms public corporate filings into an interactive visual analysis of economic value creation and its 5-way distribution across stakeholders.
+**MEROS** (Greek: *μέρος* - Portion, Share & Stakeholder Allotment) is an institutional-grade financial engineering terminal built in Python (`Streamlit`, `Pandas`, `NumPy`, `Plotly`) that bridges everyday consumer curiosity with rigorous strategic finance. It transforms public corporate filings into an interactive visual analysis of economic value creation and its 5-way distribution across stakeholders.
 
 </div>
 
 ---
 
-## 🌟 Core Architectural Pillars
+##  Core Architectural Pillars
 
 Standard financial platforms view enterprises strictly through an equity investor lens—treating workforce salaries, statutory taxes, and vendor payouts merely as expenses to be minimized. **MEROS** evaluates a corporation as a **value-creation and distribution engine** across competing economic claimants:
 
@@ -26,7 +26,7 @@ Standard financial platforms view enterprises strictly through an equity investo
 
 ---
 
-## 📊 Key Analytical Modules (5-Tab Interactive Terminal)
+## Key Analytical Modules (5-Tab Interactive Terminal)
 
 * **Tab 1: The ₹100 Consumer Anatomy ("Where Does Your Money Go?")**  
   * Traces every ₹100 of customer spending from top-line revenue down through raw materials, logistics, workforce, wear-and-tear, lenders, taxes, and net shareholder retention.
@@ -47,7 +47,7 @@ Standard financial platforms view enterprises strictly through an equity investo
 
 ---
 
-## 🚀 Live NSE/BSE Ticker Scraping (`yfinance`)
+## Live NSE/BSE Ticker Scraping (`yfinance`)
 
 In addition to pre-loaded Indian enterprise archetypes (FMCG, IT, Auto, Q-Commerce) and custom Schedule III `.csv`/`.xlsx` uploads, **MEROS** features a live ingestion engine powered by `yfinance`. 
 * Type any NSE/BSE ticker symbol (e.g., `RELIANCE.NS`, `TCS.NS`, `HDFCBANK.NS`, `ZOMATO.NS`, `TATAMOTORS.NS`) in the sidebar.
@@ -56,7 +56,7 @@ In addition to pre-loaded Indian enterprise archetypes (FMCG, IT, Auto, Q-Commer
 
 ---
 
-## 🛠️ Technical Stack & Design System
+## Technical Stack & Design System
 
 * **Frontend & UI Shell:** Streamlit with custom CSS injecting the **"Sovereign Bullion & Carbon Ledger"** aesthetic.
   * *Color Palette:* Deep Warm Carbon Obsidian (`#0A0A0C`), Smoked Onyx surfaces (`#111215`), and Burnished Sovereign Gold accents (`#E5A93C`).
@@ -67,7 +67,7 @@ In addition to pre-loaded Indian enterprise archetypes (FMCG, IT, Auto, Q-Commer
 
 ---
 
-## 📂 Project Repository Structure
+## Project Repository Structure
 
 ```text
 MEROS/
