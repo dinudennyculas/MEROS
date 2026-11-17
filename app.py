@@ -8,12 +8,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from benchmark_generator import (ARCHETYPES, DEFAULT_ARCHETYPE, POPULAR_TICKERS, fetch_live_nse_ticker, get_archetype_df,
-                                 get_blank_template_bytes, normalize_ticker, rebalance_to_pbt_anchor)
+from benchmark_generator import (ARCHETYPES, ASSUMPTION_REGISTER, DEFAULT_ARCHETYPE, EMP_LAKHS_PER_HEAD, EMP_MODE_LABELS,
+                                 POPULAR_TICKERS, build_live_statement, fetch_yahoo_raw, get_archetype_df, get_blank_template_bytes,
+                                 normalize_ticker, rebalance_to_pbt_anchor)
 from corporate_engine import (RECEIPT_LABELS, STAKEHOLDER_LABELS, YEARS, compute_corporate_anatomy_and_vas,
                               generate_deterministic_diagnostics, sanitize_statement_df, simulate_margin_shock)
 
-st.set_page_config(page_title="MEROS | Corporate Value-Added & Stakeholder Economics Terminal", page_icon="🧾",
+st.set_page_config(page_title="MEROS | Corporate Value-Added & Stakeholder Economics Terminal", page_icon="🪙",
                    layout="wide", initial_sidebar_state="expanded")
 
 GOLD, JADE, COPPER, CYAN = "#E5A93C", "#10B981", "#F97316", "#38BDF8"
@@ -32,6 +33,7 @@ SEV_TONE = {"positive": "t-green", "warning": "t-amber", "danger": "t-red", "inf
 SRC_ARCH, SRC_LIVE, SRC_UP = ("Pre-Loaded Public Archetypes", "Live NSE / BSE Ticker (Yahoo Finance)",
                               "Upload Custom 3-Year Statement (.csv/.xlsx)")
 QUICK_NONE = "— use the symbol typed above —"
+SCOPE_TITLES = {"Live": "LIVE YAHOO FINANCE INGESTION", "All": "ENGINE-WIDE · EVERY DATA SOURCE", "Archetype": "PRE-LOADED ARCHETYPES"}
 GRID = "rgba(244,241,234,0.06)"
 LEG_BELOW = dict(orientation="h", yanchor="top", y=-0.26, xanchor="center", x=0.5, font=dict(size=10))
 RECEIPT_STAMP = '<div class="receipt-stamp">VERIFIED LEDGER · <b>MEROS</b> ENGINE BY <b>DINU DENNY CULAS</b></div>'
@@ -61,11 +63,14 @@ section[data-testid="stSidebar"]{background:#111215;border-right:1px solid rgba(
 .mast-rule{height:1px;background:linear-gradient(90deg,rgba(229,169,60,.7),rgba(244,241,234,.1) 45%,transparent);}
 .notice{background:rgba(229,169,60,.06);border:1px solid rgba(229,169,60,.28);border-left:3px solid #E5A93C;border-radius:8px;padding:.8rem 1rem;margin:.2rem 0 1rem 0;font-size:.78rem;line-height:1.65;color:#C9C6BE;}
 .notice b{color:#E5A93C;letter-spacing:.1em;font-size:.66rem;margin-right:.4rem;}
+.notice.alert{background:rgba(244,63,94,.07);border-color:rgba(244,63,94,.35);border-left-color:#F43F5E;}
+.notice.alert b{color:#F43F5E;}
 .glass-card,.kpi-card,.diag-card{background:#15171C;border:1px solid rgba(244,241,234,.08);border-top:1px solid rgba(244,241,234,.18);border-radius:10px;padding:1.2rem;transition:transform 220ms cubic-bezier(0.22,1,0.36,1),border-color 220ms ease,box-shadow 220ms ease;}
 .glass-card:hover,.kpi-card:hover,.diag-card:hover{transform:translateY(-2px);border-color:rgba(229,169,60,.35);box-shadow:0 12px 28px -8px rgba(0,0,0,.65);}
 .t-gold,.t-blue{--c:#E5A93C;--bg:rgba(229,169,60,.12);}.t-green{--c:#10B981;--bg:rgba(16,185,129,.12);}
 .t-amber{--c:#F59E0B;--bg:rgba(245,158,11,.12);}.t-red{--c:#F43F5E;--bg:rgba(244,63,94,.12);}
 .t-cyan{--c:#38BDF8;--bg:rgba(56,189,248,.12);}.t-violet{--c:#A855F7;--bg:rgba(168,85,247,.12);}
+.t-mute{--c:#8E929F;--bg:rgba(142,146,159,.10);}
 .kpi-grid{display:grid;gap:.7rem;align-items:stretch;margin-bottom:1rem;}
 .kpi-grid.n5{grid-template-columns:repeat(5,minmax(0,1fr));}
 .kpi-grid.n4{grid-template-columns:repeat(4,minmax(0,1fr));}
@@ -113,6 +118,8 @@ section[data-testid="stSidebar"]{background:#111215;border-right:1px solid rgba(
 .vas-table tr.subtotal td{font-weight:600;border-top:1px solid rgba(244,241,234,.22);}
 .vas-table tr.total td{font-weight:700;border-top:1px solid rgba(244,241,234,.3);border-bottom:3px double rgba(244,241,234,.4);background:rgba(244,241,234,.02);}
 .vas-table tr.memo td{font-style:italic;color:#8E929F;font-size:.78rem;}
+.reg-table td{vertical-align:top;font-size:.76rem;line-height:1.55;}
+.reg-table td.rid{font-family:'JetBrains Mono',monospace;color:#E5A93C;font-weight:700;white-space:nowrap;}
 .stTabs [data-baseweb="tab-list"]{gap:4px;border-bottom:1px solid rgba(244,241,234,.1);}
 .stTabs [data-baseweb="tab"]{background:transparent;border-radius:6px 6px 0 0;padding:.5rem 1rem;font-weight:600;color:#8E929F;}
 .stTabs [aria-selected="true"]{color:#E5A93C;}
@@ -122,8 +129,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]{background:#15171C;border:1px so
 
 
 @st.cache_data(ttl=3600, show_spinner="Fetching audited filings from Yahoo Finance...")
-def load_live(symbol: str) -> tuple[pd.DataFrame, dict]:
-    return fetch_live_nse_ticker(symbol)
+def load_live_raw(symbol: str) -> dict:
+    return fetch_yahoo_raw(symbol)
 
 
 def _bump_reset() -> None:
@@ -220,6 +227,36 @@ def render_table(headers: list[str], rows: list[tuple[str, str, list[str]]]) -> 
             f'<table class="vas-table"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
 
 
+def reg_badge(scope: str, rid: str, status_map: dict, arch_on: bool, live_on: bool) -> str:
+    if scope == "All":
+        return '<span class="kpi-badge t-cyan">ALWAYS ON</span>'
+    if scope == "Archetype":
+        return '<span class="kpi-badge t-amber">● ACTIVE</span>' if arch_on else '<span class="kpi-badge t-mute">ARCHETYPES ONLY</span>'
+    if not live_on:
+        return '<span class="kpi-badge t-mute">LIVE ONLY</span>'
+    state = status_map.get(rid, "inactive")
+    if state == "active":
+        return '<span class="kpi-badge t-amber">● ACTIVE</span>'
+    if state == "always":
+        return '<span class="kpi-badge t-cyan">ALWAYS ON</span>'
+    return '<span class="kpi-badge t-green">NOT TRIGGERED</span>'
+
+
+def render_register(status_map: dict, arch_on: bool, live_on: bool) -> str:
+    heads = ["ID", "Assumption", "Why it is needed (reasoning)", "Effect & how to override", "Status"]
+    head = "".join(f"<th>{html.escape(h)}</th>" for h in heads)
+    body: list[str] = []
+    last = None
+    for rid, scope, area, what, why, effect in ASSUMPTION_REGISTER:
+        if scope != last:
+            body.append(f'<tr class="section"><td colspan="{len(heads)}">{html.escape(SCOPE_TITLES[scope])}</td></tr>')
+            last = scope
+        body.append(f'<tr><td class="rid">{rid}</td><td><b>{html.escape(area)}</b><br>{html.escape(what)}</td>'
+                    f'<td>{html.escape(why)}</td><td>{html.escape(effect)}</td><td>{reg_badge(scope, rid, status_map, arch_on, live_on)}</td></tr>')
+    return ('<div class="glass-card" style="overflow-x:auto;padding:.6rem .9rem;">'
+            f'<table class="vas-table reg-table"><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+
+
 def load_uploaded(file) -> pd.DataFrame:
     if file.name.lower().endswith(".xlsx"):
         return pd.read_excel(file, dtype=str, engine="openpyxl")
@@ -237,15 +274,21 @@ def preview_cell(v) -> str:
     return "∅ (blank)" if s.strip() == "" else s
 
 
-def notice_block(meta: dict) -> str:
+def notice_block(meta: dict, emp_state: str) -> str:
     fy_txt = " · ".join(f"{fy} = {lab}" for fy, lab in zip(YEARS, meta["period_labels"]))
     sector = html.escape(meta["sector"] or "sector n/a")
     lines = [f"<b>SOURCE</b>Yahoo Finance (yfinance) · latest 3 annual filings · {fy_txt} · ₹ Crores · {sector}"]
     for k in ("emp_cost_note", "headcount_note", "tax_note", "opex_note"):
         lines.append("▸ " + html.escape(meta[k]))
+    if emp_state == "user":
+        lines.append("▸ You have overridden EMP_COST in the grid, so the employee-cost note above describes the scraped starting point, not the figures now shown.")
     for w in meta["warnings"]:
         lines.append("▸ " + html.escape(w))
-    return '<div class="notice">' + "<br>".join(lines) + "</div>"
+    triggered = sorted(k for k, v in meta["assumption_status"].items() if v == "active")
+    lines.append("▸ Assumptions triggered for this company: " + (", ".join(triggered) if triggered else "none beyond the structural ones")
+                 + ". Full reasoning: Tab 5 → Assumptions & Estimation Register.")
+    css = "notice alert" if (meta["emp_status"] == "missing" and emp_state != "user") else "notice"
+    return f'<div class="{css}">' + "<br>".join(lines) + "</div>"
 
 
 def build_bridge(meta: dict, pnl: pd.DataFrame, results: dict, cs: pd.DataFrame) -> str:
@@ -309,6 +352,7 @@ with st.sidebar:
     source = st.radio("Data Source", [SRC_ARCH, SRC_LIVE, SRC_UP])
     is_arch, is_live, is_up = source == SRC_ARCH, source == SRC_LIVE, source == SRC_UP
     uploaded, archetype_name, dirty_flag, live_symbol = None, DEFAULT_ARCHETYPE, True, ""
+    emp_mode, emp_pct, lph = "sector", None, float(EMP_LAKHS_PER_HEAD)
     if is_arch:
         names = list(ARCHETYPES.keys())
         archetype_name = st.selectbox("Corporate Archetype", names, index=names.index(DEFAULT_ARCHETYPE))
@@ -319,6 +363,15 @@ with st.sidebar:
         quick_pick = st.selectbox("Quick-select a popular ticker", [QUICK_NONE] + POPULAR_TICKERS)
         live_symbol = typed_symbol if quick_pick == QUICK_NONE else quick_pick
         st.caption("Bare symbols default to NSE (.NS); use .BO for BSE. Yahoo reports absolute ₹: MEROS converts it to ₹ Crores.")
+        emp_label = st.selectbox("Employee cost if Yahoo has no payroll line", list(EMP_MODE_LABELS.values()), index=0,
+                                 help="Yahoo rarely reports Schedule III employee cost for Indian companies. Choose how MEROS fills the gap: "
+                                      "a sector rule of thumb, your own % of revenue, or nothing (0, flagged in red). A reported payroll line is always used as-is.")
+        emp_mode = [k for k, v in EMP_MODE_LABELS.items() if v == emp_label][0]
+        if emp_mode == "custom":
+            emp_pct = st.number_input("Employee cost as % of revenue", min_value=0.0, max_value=95.0, value=8.0, step=0.5, format="%.1f")
+        lph = st.number_input("Avg cost per employee (₹ Lakhs), used only if Yahoo has no headcount", min_value=1.0, max_value=100.0,
+                              value=float(EMP_LAKHS_PER_HEAD), step=1.0, format="%.0f")
+        st.caption("Every estimate is flagged in the gold notice and explained in Tab 5 → Assumptions & Estimation Register.")
     else:
         uploaded = st.file_uploader("Upload 3-Year Statement", type=["csv", "xlsx"])
         st.download_button("Download Blank 3-Year Schedule III Template (.csv)", data=get_blank_template_bytes(),
@@ -331,14 +384,15 @@ with st.sidebar:
                 '<span>Strategic Finance &amp; Quantitative Engineering</span></div>', unsafe_allow_html=True)
 
 mast_slot, editor_slot = st.container(), st.container()
-live_meta, bridge_slot = None, None
+live_meta, bridge_slot, emp_state = None, None, "reported"
 
 if is_arch:
     raw_df, source_label = get_archetype_df(archetype_name, inject_dirty_data=dirty_flag), archetype_name
 elif is_live:
     try:
         live_sym = normalize_ticker(live_symbol)
-        live_base, live_meta = load_live(live_sym)
+        live_raw = load_live_raw(live_sym)
+        live_base, live_meta = build_live_statement(live_raw, emp_mode, emp_pct, lph)
     except ValueError as exc:
         st.error(str(exc))
         stop_with_footer()
@@ -349,7 +403,8 @@ elif is_live:
     with editor_slot:
         with st.expander("Live Schedule III Verification & Custom Override Grid (Editable)", expanded=False):
             st.caption("Scraped from Yahoo Finance and converted to ₹ Crores. Edit EMP_COST, HEADCOUNT or any other cell: "
-                       "every KPI, chart and the reconciliation bridge below recompute instantly.")
+                       "every KPI, chart and the reconciliation bridge below recompute instantly. Changing the employee-cost mode "
+                       "in the sidebar resets this grid.")
             c_a, c_b = st.columns([3, 1])
             rebalance_on = c_a.checkbox("Keep the Yahoo Pretax Income anchor (auto-rebalance Other Operating Expenses after my edits)",
                                         value=True, key="live_rebalance")
@@ -359,13 +414,16 @@ elif is_live:
                    "Category": st.column_config.TextColumn("Category", width="small")}
             for yr, lab in zip(YEARS, live_meta["period_labels"]):
                 cfg[yr] = st.column_config.NumberColumn(f"{yr} · {lab}", format="%.2f", step=0.01)
-            edited = st.data_editor(live_base, key=f"live_editor_{live_meta['symbol']}_{int(st.session_state.get('live_reset', 0))}",
-                                    hide_index=True, num_rows="fixed", disabled=["Line_ID", "Line_Item_Name", "Category"],
-                                    column_config=cfg)
+            editor_key = f"live_editor_{live_meta['symbol']}_{emp_mode}_{emp_pct}_{lph}_{int(st.session_state.get('live_reset', 0))}"
+            edited = st.data_editor(live_base, key=editor_key, hide_index=True, num_rows="fixed",
+                                    disabled=["Line_ID", "Line_Item_Name", "Category"], column_config=cfg)
             raw_df = rebalance_to_pbt_anchor(edited, live_meta["anchors"]["PBT"]) if rebalance_on else edited
             st.caption("Auto-rebalance ON: direct edits to Other Income / Other Operating Expenses are re-solved so PBT equals Yahoo's. "
                        "Turn it off to edit those rows freely; the bridge then shows the variance.")
             bridge_slot = st.container()
+    base_emp = live_base.set_index("Line_ID").loc["EMP_COST", YEARS].to_numpy(dtype="float64")
+    edit_emp = np.nan_to_num(edited.set_index("Line_ID").loc["EMP_COST", YEARS].to_numpy(dtype="float64"))
+    emp_state = "user" if not np.allclose(base_emp, edit_emp, atol=1e-9) else live_meta["emp_status"]
     with fy_slot:
         st.caption(" · ".join(f"{fy} → {lab}" for fy, lab in zip(YEARS, live_meta["period_labels"])))
 else:
@@ -408,7 +466,7 @@ with mast_slot:
                 '<div class="mast-sub">Greek for portion, share &amp; stakeholder allotment · all figures in ₹ Crores</div>'
                 '<div class="mast-rule"></div></div>', unsafe_allow_html=True)
     if live_meta is not None:
-        st.markdown(notice_block(live_meta), unsafe_allow_html=True)
+        st.markdown(notice_block(live_meta, emp_state), unsafe_allow_html=True)
 
 ti_fy, gva_fy = float(pnl.loc["Total_Income", active_fy]), float(pnl.loc["GVA", active_fy])
 rev_cagr = float(cagr["Revenue_CAGR_Pct"])
@@ -419,6 +477,13 @@ closure_txt = "Verified ✅" if closure_ok else "Breach ⚠️"
 cagr_tone = "t-gold" if not np.isfinite(rev_cagr) else ("t-green" if rev_cagr >= 10 else ("t-gold" if rev_cagr >= 0 else "t-red"))
 pat_tone = "t-green" if pat_margin >= 10 else ("t-amber" if pat_margin > 0 else "t-red")
 hyg_tone = "t-red" if not closure_ok else ("t-amber" if audit["cells_repaired"] > 0 else "t-green")
+emp_flag, k4_tone = "", "t-cyan"
+if live_meta is not None and emp_state == "estimated":
+    emp_flag, k4_tone = " · EMP COST ESTIMATED", "t-amber"
+elif live_meta is not None and emp_state == "missing":
+    emp_flag, k4_tone = " · EMP COST MISSING", "t-red"
+elif live_meta is not None and emp_state == "user":
+    emp_flag = " · EMP COST USER-SET"
 
 st.markdown(kpi_grid([
     kpi_card("Total Income", fmt_cr(ti_fy), f"{active_fy} · Revenue + Other Income",
@@ -428,8 +493,8 @@ st.markdown(kpi_grid([
     kpi_card("Consumer Net Profit Bite", f"{fmt_rs(pat_bite)} per ₹100 spent", f"{active_fy} · PAT per ₹100 of income",
              f"PAT Margin {fmt_pct(pat_margin, 2)}", pat_tone),
     kpi_card("Workforce Productivity", f"{fmt_lakh(float(kpis.loc['Value_Added_Per_Emp_Lakhs', active_fy]), 1)} / Emp",
-             f"{active_fy} · Value added per employee",
-             f"Human Capital ROI {float(kpis.loc['Human_Capital_ROI', active_fy]):.2f}x", "t-cyan"),
+             f"{active_fy} · Value added per employee{emp_flag}",
+             f"Human Capital ROI {float(kpis.loc['Human_Capital_ROI', active_fy]):.2f}x", k4_tone),
     kpi_card("Data Hygiene & Closure", f"{audit['cells_repaired']} cells",
              f"auto-cleaned | {audit['repair_pct']:.1f}% of {audit['total_cells']} cells",
              f"VAS Closure: {closure_txt}", hyg_tone),
@@ -601,6 +666,11 @@ with tab3:
                  f"EVA proxy {fmt_cr(eva_v, 0)}", "t-green" if spread_v > 0 else "t-red"),
         kpi_card("Interest Coverage", icr_txt, f"{active_fy} · EBIT ÷ Finance Cost", icr_badge, icr_tone),
     ]), unsafe_allow_html=True)
+    if live_meta is not None and emp_state in ("estimated", "missing"):
+        st.warning("Workforce metrics below (cost per employee, value added per employee, Human Capital ROI, labour share) rest on "
+                   + ("an ESTIMATED" if emp_state == "estimated" else "a MISSING (0)")
+                   + " employee cost and, where Yahoo has no headcount, an estimated headcount. See assumptions L07 and L17 in Tab 5, "
+                   "and replace the figure in the verification grid if you know it.")
 
     ch_left, ch_right = st.columns(2, gap="large")
     with ch_left:
@@ -894,6 +964,13 @@ with tab5:
                     'current verification grid. Variances appear only if you override cells with auto-rebalance off.</div>', unsafe_allow_html=True)
         st.markdown(bridge_html, unsafe_allow_html=True)
 
+    st.markdown('<div class="section-h">Assumptions &amp; <em>estimation register</em></div>'
+                '<div class="section-sub">Everything MEROS had to assume because it cannot be read directly from the public data: what is '
+                'assumed, why, and how to override it. ACTIVE means the assumption changed numbers for the company currently on screen; '
+                'ALWAYS ON means it is a structural rule of the method.</div>', unsafe_allow_html=True)
+    st.markdown(render_register(live_meta["assumption_status"] if live_meta is not None else {}, is_arch, live_meta is not None),
+                unsafe_allow_html=True)
+
     trace_lines = [
         f"[1] GVA = ({fy_in['REV_OPS']:,.4f} + {fy_in['REV_OTH']:,.4f}) - ({fy_in['COGS_MAT']:,.4f} + {fy_in['OPEX_EXT']:,.4f})"
         f" = {h_total_income:,.4f} - {h_bought:,.4f} = {h_gva:,.4f}",
@@ -982,5 +1059,4 @@ Breakeven_Price_Hike_Pct = _safe_div(Total_Cost_Inflation, REV_OPS) * 100.0   # 
     st.code(code_stake, language="python")
     st.markdown("**Inflation pass-through simulation**")
     st.code(code_sim, language="python")
-
 st.markdown(COLOPHON, unsafe_allow_html=True)
