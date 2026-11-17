@@ -1,4 +1,4 @@
-"""MEROS benchmark data: 4 Indian enterprise archetypes (₹ Crores) + live NSE/BSE ingestion via Yahoo Finance."""
+"""MEROS benchmark data: 4 synthetic Indian enterprise archetypes (₹ Crores) + live NSE/BSE ingestion via Yahoo Finance."""
 from __future__ import annotations
 
 import datetime as _dt
@@ -191,8 +191,6 @@ def get_blank_template_bytes() -> bytes:
 # Live NSE / BSE ingestion via Yahoo Finance (yfinance)
 # ======================================================================================
 CRORE: float = 1e7
-EMP_SGA_SHARE: float = 0.55
-EMP_REV_SHARE: float = 0.07
 EMP_LAKHS_PER_HEAD: float = 12.0
 
 POPULAR_TICKERS: list[str] = [
@@ -200,7 +198,180 @@ POPULAR_TICKERS: list[str] = [
     "SBIN.NS", "MARUTI.NS", "LT.NS", "ASIANPAINT.NS", "NESTLEIND.NS", "ZOMATO.NS", "ETERNAL.NS", "TATAMOTORS.NS",
 ]
 
+EMP_MODE_LABELS: dict[str, str] = {
+    "sector": "Sector-based estimate (default)",
+    "custom": "Custom % of revenue",
+    "none": "Do not estimate (leave 0 and flag)",
+}
+
+# Employee cost as % of revenue: (typical, low, high, label, Yahoo 'Cost Of Revenue' mostly contains people cost?)
+# These are ROUGH RULES OF THUMB from general knowledge of Indian listed-company annual reports.
+# They are NOT computed from Yahoo data or from a dataset analysed by the author; ranges are wide.
+SECTOR_EMP_PCT: dict[str, tuple[float, float, float, str, bool]] = {
+    "technology": (40.0, 20.0, 55.0, "Technology", True),
+    "financial services": (9.0, 5.0, 14.0, "Financial services", False),
+    "consumer defensive": (5.0, 3.0, 9.0, "Consumer defensive", False),
+    "consumer cyclical": (6.0, 3.0, 12.0, "Consumer cyclical", False),
+    "industrials": (9.0, 4.0, 16.0, "Industrials", False),
+    "basic materials": (4.0, 2.0, 8.0, "Basic materials", False),
+    "energy": (2.0, 1.0, 5.0, "Energy", False),
+    "utilities": (4.0, 2.0, 8.0, "Utilities", False),
+    "healthcare": (15.0, 9.0, 22.0, "Healthcare", False),
+    "communication services": (8.0, 3.0, 15.0, "Communication services", False),
+    "real estate": (6.0, 3.0, 12.0, "Real estate", False),
+}
+INDUSTRY_EMP_PCT: list[tuple[str, tuple[float, float, float, str, bool]]] = [
+    ("information technology services", (50.0, 45.0, 58.0, "IT services", True)),
+]
+DEFAULT_EMP_PCT: tuple[float, float, float, str, bool] = (7.0, 3.0, 15.0, "Unclassified sector", False)
+
+
+def lookup_emp_ratio(sector: object, industry: object) -> dict:
+    """Pick the employee-cost-to-revenue rule of thumb from Yahoo's industry (first) or sector."""
+    ind, sec = str(industry or "").lower(), str(sector or "").lower().strip()
+    hit = None
+    for keyword, tup in INDUSTRY_EMP_PCT:
+        if keyword in ind:
+            hit = tup
+            break
+    if hit is None:
+        hit = SECTOR_EMP_PCT.get(sec, DEFAULT_EMP_PCT)
+    typ, lo, hi, label, carve = hit
+    return {"typical": typ, "low": lo, "high": hi, "label": label, "cogs_has_emp": carve}
+
+
+_SECTOR_TXT = "; ".join(
+    f"{v[3]} {v[0]:.0f}% (range {v[1]:.0f}-{v[2]:.0f}%)"
+    for v in [INDUSTRY_EMP_PCT[0][1]] + list(SECTOR_EMP_PCT.values()) + [DEFAULT_EMP_PCT]
+)
+
+# (id, scope, area, assumption, why it is needed, effect and how to override). scope: Live | All | Archetype
+ASSUMPTION_REGISTER: list[tuple[str, str, str, str, str, str]] = [
+    ("L01", "Live", "Units & currency",
+     "Yahoo's figures are Indian rupees. Every amount is divided by 10,000,000 and rounded to 2 decimals to give ₹ Crores.",
+     "Yahoo returns absolute currency units while Indian disclosure uses crores (1 Cr = 10 million). The currency tag is read from Yahoo's 'financialCurrency'.",
+     "Exact if the company reports in INR. A non-INR tag raises a warning but nothing is converted, so the scale would be wrong."),
+    ("L02", "Live", "Fiscal-year labels",
+     "The latest three annual periods are labelled FY24, FY25, FY26 by position, oldest to newest.",
+     "MEROS has three fixed year columns and Yahoo returns period-end dates, not Indian fiscal-year names. The real period ends are shown beside every label.",
+     "If the newest filing is older than March 2026, 'FY26' just means 'latest year'. Check the dates in the sidebar and the bridge."),
+    ("L03", "Live", "Statement alignment",
+     "Balance-sheet and cash-flow columns are matched to income-statement periods by nearest date, within 45 days.",
+     "Yahoo serves the three statements as separate tables whose columns are not guaranteed to line up. Date matching keeps a year's debt, equity and dividends with that year's profit.",
+     "A year with no match falls back to 0 for that item. It is visible and editable in the override grid."),
+    ("L04", "Live", "Revenue line",
+     "Revenue from operations = 'Operating Revenue', else 'Total Revenue', else 'Interest Income' (banks).",
+     "Yahoo's line items follow a global taxonomy, not Schedule III. Banks have no 'operating revenue', so interest income is the closest top line.",
+     "Gross interest income for a bank is not comparable with a manufacturer's sales."),
+    ("L05", "Live", "Other income",
+     "Other income = Yahoo's 'Other Income Expense' or 'Non Operating Income Net Other' if positive, otherwise the gap Total Revenue minus Operating Revenue (never below 0).",
+     "Yahoo has no clean 'Other income' row. Those lines are net figures and can include non-operating expenses.",
+     "Other income can be over- or under-stated. Pretax income is unaffected because the balancing figure (L09) absorbs the difference."),
+    ("L06", "Live", "Cost of revenue as 'materials'",
+     "COGS_MAT = Yahoo's 'Cost Of Revenue' (0 if absent).",
+     "It is the nearest Yahoo line to 'materials and stock-in-trade'.",
+     "Not Schedule III. For IT firms it mostly holds people cost and for banks it is absent. Total bought-in cost is fixed by PBT, so only the materials-versus-other split moves."),
+    ("L07", "Live", "Employee cost",
+     "Employee cost = Yahoo's 'Salaries And Wages' when present (taken as the complete payroll). Otherwise it is estimated as a % of revenue by your chosen mode: sector rule of thumb (default), custom %, or left at 0 and flagged.",
+     "Yahoo rarely carries Schedule III 'Employee benefit expense' for Indian companies. The sector table (% of revenue: " + _SECTOR_TXT
+     + ") is a rule of thumb from typical Indian annual reports, not data computed from Yahoo, and its ranges are wide. The earlier '55% of SG&A' rule was dropped because SG&A contents differ by company.",
+     "In live mode GVA = PBT + employee cost + depreciation + finance cost, so every ₹1 Cr of error here moves GVA, labour share, value added per employee and Human Capital ROI by the same amount. PBT, PAT, ROCE, ROE and coverage are unaffected. Type the real figure into the override grid."),
+    ("L08", "Live", "IT-services carve-out",
+     "For Technology and IT services, an estimated employee cost is carved out of 'Cost Of Revenue' first instead of being added on top.",
+     "In IT-services filings most cost of revenue is people cost, so adding a separate payroll estimate would double count it and the balancing figure would run out of room.",
+     "Total bought-in plus workforce cost is unchanged; only the split moves. Not applied when payroll is reported."),
+    ("L09", "Live", "Other operating expenses = balancing figure",
+     "OPEX_EXT = (REV_OPS + REV_OTH) - PBT - COGS - EMP - DEP - FIN.",
+     "Yahoo bundles many Schedule III lines (freight, power, marketing, provisions, exceptional items) and has no 'other expenses' row. Solving for it reproduces Yahoo's Pretax Income and, with L11, Net Income to the paisa, so VAS closure is exact.",
+     "It absorbs every cost not otherwise classified, including exceptional items and, for banks, provisions. It is the least 'observed' cost line in live mode."),
+    ("L10", "Live", "Negative balancing figure",
+     "If the balancing figure would be negative it is set to 0 and Other Income is raised by the shortfall.",
+     "A negative expense is meaningless, and raising income keeps Pretax Income exact.",
+     "Other Income is overstated in those years. The gold notice names the years and amounts."),
+    ("L11", "Live", "Tax expense",
+     "TAX_EXP = Pretax Income minus Net Income. Yahoo's 'Tax Provision' is used only to flag differences.",
+     "This makes PAT equal Yahoo's Net Income exactly. The two differ when there are minority interests, associates or exceptional items.",
+     "Those items are counted as 'Government' in the value-added statement. The notice lists years where they differ by more than ₹0.05 Cr."),
+    ("L12", "Live", "Depreciation source",
+     "Depreciation = 'Reconciled Depreciation', else 'Depreciation And Amortization In Income Statement', else the cash-flow D&A line.",
+     "Yahoo does not always populate the same line, so a fixed cascade is used.",
+     "Cash-flow D&A can include items such as impairments that are not in the P&L. Marked ACTIVE only when the fallback is used."),
+    ("L13", "Live", "Finance cost for banks",
+     "Without an 'Interest Expense' row, finance cost = Interest Income minus Net Interest Income.",
+     "Net interest income is a result, not a cost. Gross interest expense is the difference, so using it directly would put income in a cost line.",
+     "An exact identity when both rows exist; otherwise finance cost is 0."),
+    ("L14", "Live", "Dividends",
+     "Dividends = cash dividends paid in the cash-flow statement (absolute value), 0 if missing.",
+     "Yahoo has no 'declared dividend' line. The cash-flow figure is what actually left the company.",
+     "Timing differs from declared dividends and may include payouts to minority holders."),
+    ("L15", "Live", "Debt definition",
+     "Debt = Yahoo's 'Total Debt', else long-term plus current debt.",
+     "It is the closest Yahoo item to total borrowings.",
+     "Total Debt can include lease liabilities (Ind AS 116), which raises 'debt'. For banks, deposits are not debt, so ROCE and coverage are not comparable with non-financials."),
+    ("L16", "Live", "Equity definition",
+     "Equity = 'Stockholders Equity' (parent's equity), else 'Total Equity Gross Minority Interest'.",
+     "ROE uses profit attributable to common holders, so the matching denominator is the parent's equity.",
+     "The fallback includes minority interest and makes ROE slightly inconsistent. Marked ACTIVE only when used."),
+    ("L17", "Live", "Headcount",
+     "Headcount = Yahoo's single current 'fullTimeEmployees' applied to all three years. If missing, it is estimated as employee cost divided by your cost-per-employee setting (default ₹12 lakh).",
+     "Yahoo gives only a snapshot, not a history, and often nothing for Indian firms. ₹12 lakh is a blunt cross-sector average (IT, FMCG and banks differ widely) and is editable in the sidebar.",
+     "Value added per employee and cost per employee for earlier years are approximate. A headcount estimated from an estimated payroll inherits both errors."),
+    ("L18", "Live", "Banks and financial companies",
+     "Banks and NBFCs are processed with the same value-added template.",
+     "MEROS has one schema, and for lenders interest is both the main revenue and the main cost.",
+     "Indicative only: deposits are not debt, COGS is 0 and gross interest income is the top line."),
+    ("E01", "All", "Government share",
+     "The government slice is income-tax expense only.",
+     "The statements read here do not show GST, customs, excise or property tax collected or paid, and Schedule III revenue is net of GST.",
+     "It understates the state's full tax take. Read it as direct tax on profits."),
+    ("E02", "All", "The '₹100 receipt' base",
+     "'₹100 spent by the customer' = ₹100 of Total Income (operating revenue plus other income).",
+     "The audited P&L is the only record of what customers paid the company. GST, discounts and channel margins sit outside it.",
+     "Other income is treated as if it came from customers. It is a presentation device, not consumer-spending data."),
+    ("E03", "All", "Entity reinvestment",
+     "Entity reinvestment = retained earnings + depreciation.",
+     "GVA is gross of depreciation, so the part that stays inside the firm is retained profit plus the capital consumed.",
+     "If retained earnings are negative (a loss or high payout) this slice becomes small or negative."),
+    ("E04", "All", "Retained earnings timing",
+     "Retained earnings = PAT minus dividends paid in the same year.",
+     "Needed for exact closure with only three years of data and no reserve movements.",
+     "Dividends paid often relate to the previous year's profit, so single-year retention can look odd, even negative."),
+    ("E05", "All", "Year-end capital base",
+     "ROCE, ROE and implied cost of debt use year-end balances, not averages.",
+     "FY24's opening balance is not available in a three-year window, so year-end values keep every year comparable.",
+     "Overstates returns for fast-growing firms and understates them for shrinking ones."),
+    ("E06", "All", "Economic spread (EVA proxy)",
+     "Economic spread = ROCE minus implied cost of debt.",
+     "A true EVA needs WACC (cost of equity, beta, market values), which filings do not contain.",
+     "It ignores the cost of equity, so a positive spread does not prove value creation."),
+    ("E07", "All", "Zero-debt / zero-interest guards",
+     "No debt shows 0% cost of debt, and no interest shows coverage as infinite (stored as 999).",
+     "Avoids division by zero while keeping the maths vectorised.",
+     "999 is a sentinel, not a real ratio."),
+    ("E08", "All", "Blank cells",
+     "Blank, missing or unparseable input cells are imputed as 0.0 and logged.",
+     "A blank is more often a nil line (no dividend, no debt) than an unknown number, and every imputation appears in the repair log.",
+     "If the blank was really unknown, that line is understated. Check the audit log."),
+    ("E09", "All", "Diagnostic thresholds",
+     "Diagnostic cut-offs are fixed rules of thumb, e.g. bought-in 85% or more = thin-spread, ROCE 15% or more = strong, interest cover below 3x = watchlist.",
+     "The engine is deterministic and explainable, and there is no peer dataset here to calibrate against.",
+     "They are screening labels, not ratings. Sector norms differ (banks, utilities, IT)."),
+    ("E10", "All", "Shock simulator",
+     "One-period, static what-if: volumes and other costs do not react; the materials shock hits COGS only, wages hit employee cost, the rate shock hits year-end debt immediately, price pass-through lifts operating revenue only, dividends stay constant, and tax uses the FY26 effective rate if PBT is positive.",
+     "A transparent first-order sensitivity needs a fixed rule set. Behavioural response (demand elasticity, hedging, repricing lags) needs data we do not have.",
+     "Real outcomes will differ. Use it for sensitivity, not forecasting."),
+    ("A01", "Archetype", "Synthetic companies",
+     "The four pre-loaded companies are synthetic archetypes, not real filings.",
+     "They illustrate four business models (FMCG, IT services, auto, quick-commerce) so the engine can be demonstrated without a live feed. Figures were designed to have realistic proportions.",
+     "Never cite them as ITC, HUL, TCS, Infosys, Tata Motors, M&M, Zomato or Swiggy numbers."),
+    ("A02", "Archetype", "Dirty-data simulation",
+     "'Dirty ERP formatting' is deliberately injected into 4 to 5 cells.",
+     "To exercise and demonstrate the hygiene pipeline.",
+     "Imputed blanks (e.g. FY24 finance cost in the FMCG archetype) change that year's ratios. Untick the box to see the clean data."),
+]
+
 _BASE_RE = re.compile(r"^[A-Z0-9&_\-]+$")
+INFO_KEYS = ("longName", "shortName", "sector", "industry", "financialCurrency", "currency", "fullTimeEmployees")
 
 
 def normalize_ticker(symbol: str) -> str:
@@ -278,30 +449,47 @@ def _lst(arr: object) -> list:
     return [None if not np.isfinite(x) else float(x) for x in np.asarray(arr, dtype="float64")]
 
 
-def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
-    """Scrape the latest 3 annual filings of an NSE/BSE company from Yahoo Finance into the MEROS 12-row schema.
-
-    Returns (DataFrame[Line_ID, Line_Item_Name, Category, FY24, FY25, FY26] in ₹ Crores, metadata dict).
-    OPEX_EXT is solved algebraically so PBT == Yahoo Pretax Income and PAT == Yahoo Net Income exactly.
-    """
+def fetch_yahoo_raw(ticker_symbol: str) -> dict:
+    """Network step only: pull the three annual statements and a few info fields. Raises (so Streamlit never caches a failure)."""
     sym = normalize_ticker(ticker_symbol)
     try:
         import yfinance as yf
     except ImportError as exc:
         raise ValueError("The 'yfinance' package is not installed. Run: pip install yfinance") from exc
-
     try:
         tk = yf.Ticker(sym)
-        inc_raw, bs_raw, cf_raw = tk.income_stmt, tk.balance_sheet, tk.cashflow
+        inc, bs, cf = tk.income_stmt, tk.balance_sheet, tk.cashflow
     except Exception as exc:  # noqa: BLE001
         raise ValueError(f"Yahoo Finance request failed for {sym}: {exc}") from exc
     try:
-        info = dict(tk.info or {})
+        raw_info = dict(tk.info or {})
     except Exception:  # noqa: BLE001
-        info = {}
+        raw_info = {}
 
-    # ---- 3 chronological annual periods, oldest -> newest ------------------------------
-    inc = _clean_periods(inc_raw, 3)
+    def _frame(x: object) -> pd.DataFrame:
+        return x.copy() if isinstance(x, pd.DataFrame) else pd.DataFrame()
+
+    inc_df = _frame(inc)
+    if inc_df.empty:
+        raise ValueError(
+            f"Yahoo Finance returned no income statement for {sym}. The symbol may be wrong, renamed or delisted, "
+            "Yahoo may be rate-limiting you, or you may be offline. Try again in a minute or use the .BO suffix."
+        )
+    return {"symbol": sym, "inc": inc_df, "bs": _frame(bs), "cf": _frame(cf), "info": {k: raw_info.get(k) for k in INFO_KEYS}}
+
+
+def build_live_statement(raw: dict, emp_mode: str = "sector", emp_pct: float | None = None,
+                         lakhs_per_head: float = EMP_LAKHS_PER_HEAD) -> tuple[pd.DataFrame, dict]:
+    """Pure transformation of raw Yahoo statements into the MEROS 12-row schema (₹ Crores) plus a metadata dict.
+
+    OPEX_EXT is solved algebraically so PBT == Yahoo Pretax Income and PAT == Yahoo Net Income exactly.
+    """
+    if emp_mode not in EMP_MODE_LABELS:
+        raise ValueError(f"Unknown employee-cost mode '{emp_mode}'. Use one of {list(EMP_MODE_LABELS)}.")
+    sym = str(raw.get("symbol") or "")
+    info = dict(raw.get("info") or {})
+
+    inc = _clean_periods(raw.get("inc"), 3)
     if inc.shape[1] < 3:
         raise ValueError(
             f"Yahoo Finance returned {inc.shape[1]} usable annual period(s) for {sym}; MEROS needs three. "
@@ -309,8 +497,8 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
         )
     inc = inc.iloc[:, -3:]
     dates = list(inc.columns)
-    bs = _align_periods(_clean_periods(bs_raw, 3), dates)
-    cf = _align_periods(_clean_periods(cf_raw, 3), dates)
+    bs = _align_periods(_clean_periods(raw.get("bs"), 3), dates)
+    cf = _align_periods(_clean_periods(raw.get("cf"), 3), dates)
 
     # ---- Revenue --------------------------------------------------------------------
     rev_raw, rev_src = _pick(inc, ["Operating Revenue", "Total Revenue", "Interest Income"])
@@ -329,11 +517,13 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
     cogs = np.abs(np.nan_to_num(_cr(cogs_raw), nan=0.0))
     dep_i, _ = _pick(inc, ["Reconciled Depreciation", "Depreciation And Amortization In Income Statement"])
     dep_c, _ = _pick(cf, ["Depreciation And Amortization", "Depreciation Amortization Depletion"])
+    dep_from_cf = ~np.isfinite(dep_i) & np.isfinite(dep_c)
     dep = np.abs(np.nan_to_num(_cr(np.where(np.isfinite(dep_i), dep_i, dep_c)), nan=0.0))
     fin_r, _ = _pick(inc, ["Interest Expense", "Interest Expense Non Operating"])
     int_inc, _ = _pick(inc, ["Interest Income"])
     nii, _ = _pick(inc, ["Net Interest Income"])
     fin_bank = np.where(np.isfinite(int_inc) & np.isfinite(nii), np.maximum(int_inc - nii, 0.0), 0.0)
+    fin_used_bank = ~np.isfinite(fin_r) & (fin_bank > 0.0)
     fin = np.abs(_cr(np.where(np.isfinite(fin_r), fin_r, fin_bank)))
 
     # ---- Pretax / Net income anchors and tax reconciliation ----------------------------
@@ -352,58 +542,72 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
     tax_gap = np.where(np.isfinite(tprov), np.abs(tprov - tax), 0.0)
     tax_dev = tax_gap > 0.05
 
-    # ---- Employee cost (reported row, else deterministic SG&A / revenue estimate) -------
-    sal_raw, _ = _pick(inc, ["Salaries And Wages", "Wages And Salaries"])
-    sal = np.abs(_cr(sal_raw))
-    has_rep = np.isfinite(sal)
-    sga_raw, _ = _pick(inc, ["Selling General And Administration"])
-    sga = _cr(sga_raw)
-    has_sga = np.isfinite(sga)
-    est_raw = np.where(has_sga, EMP_SGA_SHARE * sga, EMP_REV_SHARE * rev_ops)
-    pool = np.maximum((rev_ops + rev_oth) - pbt - cogs - dep - fin, 0.0)
-    capped = est_raw > pool
-    est = np.round(np.clip(est_raw, 0.0, pool), 2)
-    emp = np.where(has_rep, np.round(sal, 2), est)
-
     def _yrs(mask: np.ndarray) -> str:
         return ", ".join(y for y, m in zip(YEARS, mask) if bool(m))
 
-    if has_rep.all():
-        emp_note = "EMP_COST is the reported Yahoo Finance 'Salaries And Wages' line for all three years."
+    # ---- Employee cost: reported row, else estimate / custom % / leave blank -----------
+    sal_raw, _ = _pick(inc, ["Salaries And Wages", "Wages And Salaries"])
+    sal = np.abs(_cr(sal_raw))
+    reported = np.isfinite(sal)
+    est_mask = ~reported
+    ratio = lookup_emp_ratio(info.get("sector"), info.get("industry"))
+    pct = float(emp_pct) if (emp_mode == "custom" and emp_pct is not None) else float(ratio["typical"])
+    pct = max(0.0, min(pct, 95.0))
+    ti0 = np.round(rev_ops + rev_oth, 2)
+    pool = np.maximum(ti0 - pbt - cogs - dep - fin, 0.0)
+    est_raw = np.zeros(3) if emp_mode == "none" else rev_ops * pct / 100.0
+    carve_possible = (emp_mode != "none") and bool(ratio["cogs_has_emp"])
+    carve_cap = np.where(reported | (not carve_possible), 0.0, np.minimum(est_raw, cogs))
+    cap = pool + carve_cap
+    capped = est_mask & (est_raw > cap + 1e-9)
+    est = np.round(np.clip(est_raw, 0.0, cap), 2)
+    carve = np.round(np.minimum(carve_cap, est), 2)
+    cogs_final = np.where(reported, cogs, np.round(cogs - carve, 2))
+    emp = np.where(reported, np.round(sal, 2), est)
+
+    if not est_mask.any():
+        emp_status = "reported"
+        emp_note = ("EMP_COST is the reported Yahoo Finance 'Salaries And Wages' line for all three years "
+                    "(assumed to be the complete employee cost; see assumption L07).")
+    elif emp_mode == "none":
+        emp_status = "missing"
+        emp_note = (f"⚠ EMPLOYEE COST NOT AVAILABLE for {_yrs(est_mask)}: Yahoo Finance has no payroll line for {sym} and you chose not to "
+                    "estimate, so EMP_COST is 0. Workforce share of value added, value added per employee and Human Capital ROI are NOT "
+                    "meaningful until you type the real figure into the verification grid.")
     else:
-        est_mask = ~has_rep
-        parts = []
-        if bool((est_mask & has_sga).any()):
-            parts.append(f"{EMP_SGA_SHARE * 100:.0f}% of reported SG&A ({_yrs(est_mask & has_sga)})")
-        if bool((est_mask & ~has_sga).any()):
-            parts.append(f"{EMP_REV_SHARE * 100:.0f}% of revenue ({_yrs(est_mask & ~has_sga)})")
-        cap_txt = f" Capped at the available expense pool in {_yrs(est_mask & capped)}." if bool((est_mask & capped).any()) else ""
-        emp_note = (
-            f"Yahoo Finance has no separate employee-cost row for {sym}: EMP_COST is ESTIMATED as " + " and ".join(parts) + "."
-            + cap_txt + " Edit it in the verification grid; Other Operating Expenses re-balance so PBT still equals Yahoo's."
-        )
+        emp_status = "estimated"
+        basis = (f"your custom {pct:.1f}% of revenue" if emp_mode == "custom" else
+                 f"{pct:.1f}% of revenue (rule of thumb for {ratio['label']}; typical range {ratio['low']:.0f}-{ratio['high']:.0f}%)")
+        extra = ""
+        if capped.any():
+            extra += f" Capped at the available expense pool in {_yrs(capped)}."
+        if bool((carve > 0).any()):
+            extra += " The estimate is carved out of Yahoo's Cost Of Revenue (mostly people cost for this sector) instead of being added on top."
+        emp_note = (f"EMP_COST is ESTIMATED for {_yrs(est_mask)} at {basis}.{extra} "
+                    "Replace it with the annual-report figure in the verification grid.")
 
     # ---- Algebraic closure: OPEX_EXT absorbs every unclassified expense ---------------
     ti = np.round(rev_ops + rev_oth, 2)
-    opex = np.round(ti - pbt - cogs - emp - dep - fin, 2)
+    opex = np.round(ti - pbt - cogs_final - emp - dep - fin, 2)
     neg = opex < 0.0
     lift = np.where(neg, -opex, 0.0)
     rev_oth = np.round(rev_oth + lift, 2)
     opex = np.where(neg, 0.0, opex)
     ti = np.round(rev_ops + rev_oth, 2)
-    if float(np.max(np.abs(ti - cogs - opex - emp - dep - fin - pbt))) > 1e-6:
+    if float(np.max(np.abs(ti - cogs_final - opex - emp - dep - fin - pbt))) > 1e-6:
         raise ValueError(f"Internal closure check failed for {sym}: PBT could not be reproduced.")
     if neg.any():
         opex_note = ("Reported cost lines exceeded Yahoo's income in " + _yrs(neg) + ": Other Income was raised by "
                      + ", ".join(f"₹{lift[i]:,.2f} Cr ({YEARS[i]})" for i in range(3) if neg[i])
-                     + " so Other Operating Expenses stay at zero and Yahoo's Pretax Income is still reproduced exactly.")
+                     + " so Other Operating Expenses stay at zero and Yahoo's Pretax Income is still reproduced exactly (assumption L10).")
     else:
-        opex_note = ("OPEX_EXT = (REV_OPS + REV_OTH) − PBT − COGS − EMP − DEP − FIN, non-negative in all years: "
-                     "Yahoo's Pretax Income and Net Income are reproduced to the paisa.")
+        opex_note = ("OPEX_EXT is the balancing figure (REV_OPS + REV_OTH − PBT − COGS − EMP − DEP − FIN), non-negative in all years: "
+                     "Yahoo's Pretax Income and Net Income are reproduced to the paisa (assumption L09).")
     if tax_dev.any():
         tax_note = ("Yahoo 'Tax Provision' differs from Pretax − Net Income by "
                     + ", ".join(f"₹{tax_gap[i]:,.2f} Cr ({YEARS[i]})" for i in range(3) if tax_dev[i])
-                    + " (minority interest, associates or exceptional items). TAX_EXP is set to Pretax − Net Income so PAT equals Yahoo's Net Income exactly.")
+                    + " (minority interest, associates or exceptional items). TAX_EXP is set to Pretax − Net Income so PAT equals "
+                    "Yahoo's Net Income exactly (assumption L11).")
     else:
         tax_note = "Yahoo 'Tax Provision' reconciles to Pretax Income − Net Income in all three years."
 
@@ -415,36 +619,57 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
     cud, _ = _pick(bs, ["Current Debt"])
     debt_alt = np.nan_to_num(ltd, nan=0.0) + np.nan_to_num(cud, nan=0.0)
     debt = np.abs(_cr(np.where(np.isfinite(debt_r), debt_r, debt_alt)))
-    eq_r, _ = _pick(bs, ["Stockholders Equity", "Total Equity Gross Minority Interest"])
-    equity = np.nan_to_num(_cr(eq_r), nan=0.0)
+    eq1, _ = _pick(bs, ["Stockholders Equity"])
+    eq_all, _ = _pick(bs, ["Stockholders Equity", "Total Equity Gross Minority Interest"])
+    eq_fallback = ~np.isfinite(eq1) & np.isfinite(eq_all)
+    equity = np.nan_to_num(_cr(eq_all), nan=0.0)
 
+    lph = max(float(lakhs_per_head), 0.1)
     try:
         fte = int(float(info.get("fullTimeEmployees")))
     except (TypeError, ValueError):
         fte = 0
     if fte > 0:
+        hc_status = "snapshot"
         hc = np.full(3, float(fte))
-        hc_note = (f"HEADCOUNT = {fte:,} (Yahoo 'fullTimeEmployees', a single current figure) applied to all three years; "
-                   "edit per year in the grid if needed.")
+        hc_note = (f"HEADCOUNT = {fte:,} (Yahoo 'fullTimeEmployees', one current figure) applied to all three years; "
+                   "edit per year in the grid if needed (assumption L17).")
+    elif bool((emp > 0).any()):
+        hc_status = "estimated"
+        hc = np.where(emp > 0, np.maximum(np.round(emp * 100.0 / lph), 1.0), 0.0)
+        hc_note = (f"Yahoo has no 'fullTimeEmployees' for {sym}: HEADCOUNT is ESTIMATED as EMP_COST ÷ ₹{lph:.0f} Lakhs per employee"
+                   + (", so it also inherits the employee-cost estimate's error" if emp_status != "reported" else "")
+                   + ". Edit it in the verification grid (assumption L17).")
     else:
-        hc = np.maximum(np.round(emp * 100.0 / EMP_LAKHS_PER_HEAD), 1.0)
-        hc_note = (f"Yahoo has no 'fullTimeEmployees' for {sym}: HEADCOUNT is ESTIMATED from EMP_COST at "
-                   f"₹{EMP_LAKHS_PER_HEAD:.0f} Lakhs per employee. Edit it in the verification grid.")
+        hc_status = "missing"
+        hc = np.zeros(3)
+        hc_note = (f"HEADCOUNT is NOT AVAILABLE for {sym} (no Yahoo headcount and no employee cost to derive it from): it is 0, so per-employee "
+                   "metrics are meaningless until you enter it in the verification grid.")
 
-    # ---- Metadata & warnings ----------------------------------------------------------
-    sector = str(info.get("sector") or "")
-    industry = str(info.get("industry") or "")
+    # ---- Metadata, warnings and assumption status ------------------------------------
+    sector, industry = str(info.get("sector") or ""), str(info.get("industry") or "")
     currency = str(info.get("financialCurrency") or info.get("currency") or "INR").upper()
     is_fin = ("financial" in sector.lower()) or (bool(np.isfinite(int_inc).all()) and not bool((cogs > 0).any()))
     warnings: list[str] = []
     if currency != "INR":
-        warnings.append(f"Yahoo reports financials in {currency}, not INR; figures were still divided by 1e7 and labelled ₹ Crores.")
+        warnings.append(f"Yahoo reports financials in {currency}, not INR; figures were still divided by 1e7 and labelled ₹ Crores (assumption L01).")
     if is_fin:
-        warnings.append("Bank / financial company detected: revenue is interest-based, COGS is 0 and finance cost is "
-                        "Interest Income − Net Interest Income. Value-added ratios are indicative for lenders.")
+        warnings.append("Bank / financial company detected: revenue is interest-based, COGS is 0 and finance cost is Interest Income − "
+                        "Net Interest Income. Value-added ratios are indicative for lenders (assumptions L13, L15, L18).")
+
+    status: dict[str, str] = {k: "always" for k in ("L02", "L03", "L04", "L05", "L06", "L09", "L11", "L14", "L15")}
+    status["L01"] = "active" if currency != "INR" else "always"
+    status["L07"] = "inactive" if emp_status == "reported" else "active"
+    status["L08"] = "active" if bool((carve > 0).any()) else "inactive"
+    status["L10"] = "active" if bool(neg.any()) else "inactive"
+    status["L12"] = "active" if bool(dep_from_cf.any()) else "inactive"
+    status["L13"] = "active" if bool(fin_used_bank.any()) else "inactive"
+    status["L16"] = "active" if bool(eq_fallback.any()) else "inactive"
+    status["L17"] = "always" if hc_status == "snapshot" else "active"
+    status["L18"] = "active" if is_fin else "inactive"
 
     values = {
-        "REV_OPS": rev_ops, "REV_OTH": rev_oth, "COGS_MAT": cogs, "OPEX_EXT": opex, "EMP_COST": emp,
+        "REV_OPS": rev_ops, "REV_OTH": rev_oth, "COGS_MAT": cogs_final, "OPEX_EXT": opex, "EMP_COST": emp,
         "FIN_COST": fin, "DEP_AMORT": dep, "TAX_EXP": tax, "DIV_PAID": div, "TOTAL_DEBT": debt,
         "TOTAL_EQUITY": equity, "HEADCOUNT": hc,
     }
@@ -468,11 +693,17 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
         "period_labels": [d.strftime("%b %Y") for d in dates],
         "fy_map": {yr: d.strftime("%Y-%m-%d") for yr, d in zip(YEARS, dates)},
         "units_note": "Yahoo Finance reports absolute ₹; every monetary figure was divided by 1e7 to ₹ Crores (2 dp).",
+        "emp_mode": emp_mode,
+        "emp_status": emp_status,
+        "emp_pct_used": float(pct),
+        "emp_ratio": ratio,
+        "hc_status": hc_status,
         "emp_cost_note": emp_note,
         "headcount_note": hc_note,
         "tax_note": tax_note,
         "opex_note": opex_note,
         "warnings": warnings,
+        "assumption_status": status,
         "anchors": {
             "TOTAL_REVENUE": _lst(ti_anchor),
             "PBT": _lst(pbt),
@@ -483,6 +714,12 @@ def fetch_live_nse_ticker(ticker_symbol: str) -> tuple[pd.DataFrame, dict]:
         "fetched_at": _dt.datetime.now().isoformat(timespec="seconds"),
     }
     return df, meta
+
+
+def fetch_live_nse_ticker(ticker_symbol: str, emp_mode: str = "sector", emp_pct: float | None = None,
+                          lakhs_per_head: float = EMP_LAKHS_PER_HEAD) -> tuple[pd.DataFrame, dict]:
+    """One-call convenience wrapper: fetch from Yahoo Finance, then build the MEROS statement."""
+    return build_live_statement(fetch_yahoo_raw(ticker_symbol), emp_mode, emp_pct, lakhs_per_head)
 
 
 def rebalance_to_pbt_anchor(df: pd.DataFrame, pbt_anchor: list) -> pd.DataFrame:
