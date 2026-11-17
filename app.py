@@ -13,7 +13,7 @@ from benchmark_generator import (ARCHETYPES, DEFAULT_ARCHETYPE, POPULAR_TICKERS,
 from corporate_engine import (RECEIPT_LABELS, STAKEHOLDER_LABELS, YEARS, compute_corporate_anatomy_and_vas,
                               generate_deterministic_diagnostics, sanitize_statement_df, simulate_margin_shock)
 
-st.set_page_config(page_title="MEROS | Corporate Value-Added & Stakeholder Economics Terminal", page_icon="🪙",
+st.set_page_config(page_title="MEROS | Corporate Value-Added & Stakeholder Economics Terminal", page_icon="🧾",
                    layout="wide", initial_sidebar_state="expanded")
 
 GOLD, JADE, COPPER, CYAN = "#E5A93C", "#10B981", "#F97316", "#38BDF8"
@@ -45,7 +45,7 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
 .stApp{background:radial-gradient(ellipse 80% 35% at 50% -10%,rgba(229,169,60,.10),transparent),#0A0A0C;font-family:'Plus Jakarta Sans',sans-serif;color:#F4F1EA;}
 #MainMenu,footer{visibility:hidden;}
-.block-container{padding-top:1.8rem;max-width:1440px;}
+.block-container{padding-top:4.8rem;max-width:1440px;}
 section[data-testid="stSidebar"]{background:#111215;border-right:1px solid rgba(244,241,234,.08);}
 .brand-title{font-family:'Plus Jakarta Sans',sans-serif;font-weight:800;font-size:1.5rem;letter-spacing:.02em;color:#F4F1EA;}
 .brand-title em,.mast-etym em,.section-h em{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;color:#E5A93C;}
