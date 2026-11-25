@@ -1,82 +1,97 @@
 <div align="center">
 
 # MEROS (μέρος) 🧾
-### Corporate Value-Added Statement, Common-Size Anatomy & Stakeholder Economics Engine
+### Corporate Value-Added Statement, Stakeholder Economics, DuPont & EVA Terminal
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://merosfin.streamlit.app)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Sovereign Bullion & Carbon Ledger](https://img.shields.io/badge/Aesthetic-Sovereign%20Gold%20%26%20Carbon-gold)](https://github.com)
+[![Architecture: Modular v2](https://img.shields.io/badge/Architecture-MEROS%20v2-E5A93C)](https://github.com/dinudennyculas/MEROS)
 
-**MEROS** (Greek: *μέρος* - Portion, Share & Stakeholder Allotment) is an institutional-grade financial engineering terminal built in Python (`Streamlit`, `Pandas`, `NumPy`, `Plotly`) that bridges everyday consumer curiosity with rigorous strategic finance. It transforms public corporate filings into an interactive visual analysis of economic value creation and its 5-way distribution across stakeholders.
+**MEROS** (Greek: *μέρος* — Portion, Share & Stakeholder Allotment) is an interactive corporate financial analytics terminal built in Python (`Streamlit`, `Pandas`, `NumPy`, `Plotly`, `openpyxl`). It ingests live NSE/BSE filings from Yahoo Finance and multi-year Screener.in Excel exports to model economic value creation, stakeholder distribution, DuPont ROE attribution, and Economic Value Added (EVA) with zero-variance accounting closure.
 
 </div>
 
 ---
 
-##  Core Architectural Pillars
+## 🌟 Core Philosophy: No Estimates, Full Auditability
 
-Standard financial platforms view enterprises strictly through an equity investor lens—treating workforce salaries, statutory taxes, and vendor payouts merely as expenses to be minimized. **MEROS** evaluates a corporation as a **value-creation and distribution engine** across competing economic claimants:
+Standard financial platforms view enterprises strictly through an equity-only lens. **MEROS** evaluates a corporation as a **value-creation and distribution engine** across five competing economic claimants—**Supply Chain & Vendors**, **Workforce**, **Lenders**, **The State (Exchequer)**, and **Equity & Reinvestment**—while enforcing strict accounting transparency:
 
-1. **Supply Chain & Vendors** (Cost of Materials, Freight, Power, Outsourcing)
-2. **Workforce & Human Capital** (Salaries, Benefits, PF, Gratuity)
-3. **Capital Providers — Debt & Deposits** (Banks, Bondholders, Lenders)
-4. **The State / Exchequer** (Corporate Income Tax, Statutory Levies)
-5. **Capital Providers — Equity & Enterprise Retention** (Dividends + Retained Earnings + Depreciation Reinvestment Buffer)
+* **Zero Silent Estimation:** Missing items (such as unreported employee cost or headcount) are explicitly flagged as `Not reported` rather than guessed or back-filled.
+* **Zero-Variance Closure:** Every statement is algebraically reconciled against source anchors (`PBT`, `PAT Attributable`, and minority-interest adjustments `attr_adj`) so $\text{GVA} = \sum \text{Stakeholders}$ and the ₹100 consumer receipt always sums to `₹100.00`.
+* **Dynamic History Windows:** Analyze 3, 4, 5, 10, or all available fiscal years, automatically using the prior year-end balance sheet as the opening balance for average-balance returns.
 
 ---
 
-## Key Analytical Modules (5-Tab Interactive Terminal)
+## 📊 Analytical Modules (6-Tab Interactive Terminal)
 
-* **Tab 1: The ₹100 Consumer Anatomy ("Where Does Your Money Go?")**  
-  * Traces every ₹100 of customer spending from top-line revenue down through raw materials, logistics, workforce, wear-and-tear, lenders, taxes, and net shareholder retention.
-  * Features interactive waterfall charts and itemized thermal receipt vouchers.
-* **Tab 2: Stakeholder Value-Added Statement (VAS) & 3-Year Drift**  
-  * Computes Gross Value Added (`GVA = Total Income - Bought-In Goods & Services`) and Net Value Added (`NVA`).
-  * Reconciles distribution shares across the 5 stakeholder groups with **100% mathematical closure** ($\text{GVA} = \sum \text{Stakeholders}$).
-  * Includes a deterministic Python Rule-Based Diagnostic Engine that classifies enterprise archetypes and flags wage-vs-owner drift.
-* **Tab 3: Workforce Productivity & Capital Efficiency Terminal**  
-  * Evaluates human capital return on investment (`Human Capital ROI`), value added per employee, and average cost per employee.
-  * Analyzes capital returns (`ROCE`, `ROE`) against the `Implied Cost of Debt` to visualize positive economic spread and calculate the `Interest Coverage Ratio (ICR)`.
-* **Tab 4: Macroeconomic & Inflation Pass-Through Shock Simulator**  
-  * Interactive macro sliders allowing users to stress-test raw material inflation, wage hikes, and interest rate basis-point shocks.
-  * Models consumer price pass-through elasticity to evaluate margin compression and compute break-even price hikes required to protect target ROE.
-* **Tab 5: Glass-Box Formula Audit & Reconciliation Verifier**  
-  * Live mathematical closure verifier comparing vectorized engine outputs against independent step-by-step hand calculations within a strict $\vert{}variance\vert{} < 0.0001$ tolerance.
-  * Exposes the data hygiene repair log and clean, production-grade vectorized Python source formulas.
-
----
-
-## Live NSE/BSE Ticker Scraping (`yfinance`)
-
-In addition to pre-loaded Indian enterprise archetypes (FMCG, IT, Auto, Q-Commerce) and custom Schedule III `.csv`/`.xlsx` uploads, **MEROS** features a live ingestion engine powered by `yfinance`. 
-* Type any NSE/BSE ticker symbol (e.g., `RELIANCE.NS`, `TCS.NS`, `HDFCBANK.NS`, `ZOMATO.NS`, `TATAMOTORS.NS`) in the sidebar.
-* Automatically fetches audited annual statements, converts absolute rupees into ₹ Crores, maps banking (Form B) or manufacturing (Schedule III) lines, and reconciles operating expenses algebraically to guarantee zero-variance VAS closure.
-* Includes an interactive Schedule III Verification & Override Grid (`st.data_editor`) for instant line-item tuning.
+* **Tab 1 — ₹100 Consumer Anatomy ("Where Does Your Money Go?")**  
+  Traces every ₹100 of customer spending from revenue through suppliers, workforce, depreciation, lenders, taxes, and shareholder retention via interactive waterfall charts and itemized thermal receipt vouchers.
+* **Tab 2 — Stakeholder Value-Added Statement (VAS)**  
+  Computes Gross Value Added (`GVA`) and Net Value Added (`NVA`) across all selected years with exact closure checks, an attributable-profit memo row after minority interest, and a deterministic diagnostic engine flagging stakeholder drift.
+* **Tab 3 — Workforce, Capital Returns, DuPont & EVA**  
+  * **Capital Efficiency:** Average-balance `ROE`, `ROCE`, `ROIC`, `WACC`, and `Interest Coverage Ratio (ICR)`.
+  * **DuPont Decomposition:** Exact 3-step and 5-step DuPont tables with log-mean ROE-change attribution showing which factor drove ROE movement between the first and last year.
+  * **Economic Value Added (EVA):** Full EVA schedule, capital charge, and ROIC vs. WACC spread charts driven by a configurable Cost of Equity.
+* **Tab 4 — Macroeconomic & Inflation Pass-Through Shock Simulator**  
+  Interactive stress-testing sliders for raw material inflation, wage hikes, interest rate shocks, and price pass-through elasticity, displaying post-shock PAT, ROE, break-even price hikes, and before/after ₹100 receipts.
+* **Tab 5 — Glass-Box Audit, Provenance & Assumptions Register**  
+  * Independent verification of 5 core accounting identities (`|variance| < 0.0001`).
+  * Source reconciliation bridge (Yahoo / Screener) and cross-source consistency checks.
+  * Cell-level data provenance table, automated data-health checks, raw untouched source statements, and a live Assumptions Register (`ACTIVE` / `ALWAYS ON` / `NOT TRIGGERED`).
+* **Tab 6 — Peer Company Comparison**  
+  Side-by-side benchmarking against any second NSE-listed company fetched live, comparing ratios, DuPont drivers, EVA, and ROE trajectories with automatic like-for-like mismatch warnings.
 
 ---
 
-## Technical Stack & Design System
+## 🚀 Data Ingestion & Live Excel Export
 
-* **Frontend & UI Shell:** Streamlit with custom CSS injecting the **"Sovereign Bullion & Carbon Ledger"** aesthetic.
-  * *Color Palette:* Deep Warm Carbon Obsidian (`#0A0A0C`), Smoked Onyx surfaces (`#111215`), and Burnished Sovereign Gold accents (`#E5A93C`).
-  * *Typography:* `'Instrument Serif'` (editorial italic accents), `'Plus Jakarta Sans'` (UI hierarchy), and `'JetBrains Mono'` (tabular financial data & receipt vouchers).
-  * *Interactions:* Emil Design Engineering smooth hover physics (`cubic-bezier(0.22, 1, 0.36, 1)`) and specular top-edge borders.
-* **Calculation Engine:** Vectorized NumPy & Pandas operations optimized for high-performance financial data modeling.
-* **Visualizations:** Plotly Interactive Charts with dark obsidian tooltips and custom semantic color tokens.
+* **Live NSE Directory & Yahoo Finance (`yfinance`):** Search 2,600+ NSE-listed equities via `data/EQUITY_L.csv` with automatic rename hints (e.g., `ZOMATO` → `ETERNAL`) and recent-listing checks.
+* **Screener.in `.xlsx` Parser:** Upload any Screener.in Excel export (Consolidated or Standalone) for up to 10 years of history. Automatically detects inventory-change sign conventions and runs a real cost check rebuilding `PBT` within ₹0.5 Cr.
+* **Interactive Override Grid:** Edit line items directly in the app with automatic operating-expense rebalancing to preserve accounting closure.
+* **Multi-Sheet Excel Workbook Export (`openpyxl`):** Download a formatted `.xlsx` report containing live Excel formulas on the **EVA** and **DuPont** sheets (edit the yellow Cost of Equity input cell to recalculate live), paired with stored fallback values and full audit/raw sheets.
 
 ---
 
-## Project Repository Structure
+## 📂 Project Repository Structure
 
 ```text
 MEROS/
 ├── .streamlit/
-│   └── config.toml                  # Cupertino OLED dark glass theme & primary colors
-├── app.py                           # Unified Streamlit UI, Bento grid, & 5 interactive tabs
-├── corporate_engine.py              # Vectorized Pandas sanitizer, VAS engine, & shock simulator
-├── benchmark_generator.py           # Pre-loaded public archetypes & live yfinance scraper
-├── sample_corporate_statement.csv   # Default downloadable template
-├── requirements.txt                 # Production cloud dependencies
-├── LICENSE                          # MIT Open-Source License
-└── README.md                        # Project documentation
+│   └── config.toml          # Theme configuration
+├── data/
+│   └── EQUITY_L.csv         # NSE listed equity directory
+├── app.py                   # Main Streamlit shell, sidebar, routing & Excel download
+├── corporate_engine.py      # Vectorized sanitizer, VAS engine, shock simulator & diagnostics
+├── analytics.py             # History windows, DuPont (3/5-step), EVA, health checks & compare
+├── excel_export.py          # Multi-sheet openpyxl workbook builder with live formulas
+├── meros_assumptions.py     # Structured assumptions register & metadata
+├── tickers.py               # NSE ticker loader, fuzzy search & rename/listing hints
+├── yahoo_source.py          # Live Yahoo Finance fetcher & standard data-package builder
+├── screener_source.py       # Screener.in Excel parser, cost check & Yahoo cross-check
+├── ui_style.py              # Sovereign Gold & Carbon CSS, Indian formatters & disclaimer badge
+├── tabs_core.py             # Tabs 1–3 (Receipt, VAS, Workforce/Capital/DuPont/EVA)
+├── tabs_more.py             # Tabs 4–6 (Shock Simulator, Audit/Provenance, Peer Compare)
+├── meros_icon.png           # Custom browser favicon
+├── requirements.txt         # Production dependencies
+├── LICENSE                  # MIT Open-Source License
+└── README.md                # Project documentation
+```
+
+---
+
+## ⚙️ Local Setup
+
+```bash
+git clone [https://github.com/dinudennyculas/MEROS.git](https://github.com/dinudennyculas/MEROS.git)
+cd MEROS
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+---
+
+## ⚠️ Disclaimer & Data Attribution
+
+MEROS is an **educational and academic financial analysis tool** built by Dinu Denny Culas. It is **not investment advice**, nor a recommendation to buy, sell, or hold any security. Live market statements are sourced via Yahoo Finance (`yfinance`), optional user-uploaded exports are parsed from Screener.in, and the NSE equity list (`EQUITY_L.csv`) is sourced from the National Stock Exchange of India. All third-party data remains the property of its respective providers.

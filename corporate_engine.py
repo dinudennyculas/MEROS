@@ -1,40 +1,35 @@
-"""CORP-TRACE core engine: hygiene, common-size anatomy, VAS, KPIs, diagnostics, stress-test.
-Pure Python / Pandas / NumPy. Zero LLMs, zero external API calls."""
+"""MEROS core engine: hygiene, common-size anatomy, value-added statement, KPIs, diagnostics and stress test.
+
+Works on ANY number of annual periods (the year labels are passed in). Pure Python / pandas / NumPy:
+no AI, no network calls. Data modules (Yahoo, Screener) build the 12-line grid; this module only analyses it."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
 
-YEARS: list[str] = ["FY24", "FY25", "FY26"]
-
-REQUIRED_IDS: list[str] = [
-    "REV_OPS", "REV_OTH", "COGS_MAT", "OPEX_EXT", "EMP_COST", "FIN_COST",
-    "DEP_AMORT", "TAX_EXP", "DIV_PAID", "TOTAL_DEBT", "TOTAL_EQUITY", "HEADCOUNT",
+# --------------------------------------------------------------------------------------
+# Schema (the 12 canonical lines every data source must fill)
+# --------------------------------------------------------------------------------------
+SCHEMA: list[tuple[str, str, str]] = [
+    ("REV_OPS", "Revenue from Operations", "Income"),
+    ("REV_OTH", "Other Income", "Income"),
+    ("COGS_MAT", "Cost of Materials & Stock-in-Trade", "Bought-In Cost"),
+    ("OPEX_EXT", "Other Operating Expenses (Freight, Power, Marketing, Vendors)", "Bought-In Cost"),
+    ("EMP_COST", "Employee Benefit Expenses", "Workforce"),
+    ("FIN_COST", "Finance Costs (Interest Expense)", "Lenders"),
+    ("DEP_AMORT", "Depreciation & Amortization", "Capital Consumption"),
+    ("TAX_EXP", "Total Tax Expense", "Government"),
+    ("DIV_PAID", "Equity Dividends Paid", "Shareholders"),
+    ("TOTAL_DEBT", "Total Borrowings (Long-Term + Short-Term Debt)", "Balance Sheet"),
+    ("TOTAL_EQUITY", "Total Shareholders' Equity (Net Worth)", "Balance Sheet"),
+    ("HEADCOUNT", "Total Permanent Employees (Integer count)", "Workforce Disclosure"),
 ]
-
-SCHEMA_NAMES: dict[str, str] = {
-    "REV_OPS": "Revenue from Operations",
-    "REV_OTH": "Other Income",
-    "COGS_MAT": "Cost of Materials & Stock-in-Trade",
-    "OPEX_EXT": "Other Operating Expenses (Freight, Power, Marketing, Vendors)",
-    "EMP_COST": "Employee Benefit Expenses",
-    "FIN_COST": "Finance Costs (Interest Expense)",
-    "DEP_AMORT": "Depreciation & Amortization",
-    "TAX_EXP": "Total Tax Expense",
-    "DIV_PAID": "Equity Dividends Paid",
-    "TOTAL_DEBT": "Total Borrowings (Long-Term + Short-Term Debt)",
-    "TOTAL_EQUITY": "Total Shareholders' Equity (Net Worth)",
-    "HEADCOUNT": "Total Permanent Employees (Integer count)",
-}
-
-SCHEMA_CATEGORIES: dict[str, str] = {
-    "REV_OPS": "Income", "REV_OTH": "Income", "COGS_MAT": "Bought-In Cost",
-    "OPEX_EXT": "Bought-In Cost", "EMP_COST": "Workforce", "FIN_COST": "Lenders",
-    "DEP_AMORT": "Capital Consumption", "TAX_EXP": "Government", "DIV_PAID": "Shareholders",
-    "TOTAL_DEBT": "Balance Sheet", "TOTAL_EQUITY": "Balance Sheet", "HEADCOUNT": "Workforce Disclosure",
-}
+REQUIRED_IDS: list[str] = [s[0] for s in SCHEMA]
+SCHEMA_NAMES: dict[str, str] = {s[0]: s[1] for s in SCHEMA}
+SCHEMA_CATEGORIES: dict[str, str] = {s[0]: s[2] for s in SCHEMA}
+META_COLS: list[str] = ["Line_ID", "Line_Item_Name", "Category"]
 
 RECEIPT_LABELS: list[str] = [
     "Materials (COGS_MAT)",
@@ -59,8 +54,61 @@ _MISSING_TOKENS = frozenset({"", "none", "nan", "null", "nil", "na", "n/a", "-",
 
 _MONEY_METRICS = frozenset({
     "Revenue_from_Operations", "Total_Income", "Bought_In_Costs", "GVA", "EBITDA", "EBIT",
-    "PBT", "Tax_Expense", "PAT", "Retained_Earnings",
+    "PBT", "Tax_Expense", "PAT", "PAT_Attributable", "Retained_Earnings",
 })
+
+
+# --------------------------------------------------------------------------------------
+# Year labels
+# --------------------------------------------------------------------------------------
+def fy_label(period_end: Any) -> str:
+    """Indian fiscal-year label of a period end: April-December of year X -> FY(X+1); January-March of year X -> FY(X)."""
+    d = pd.Timestamp(period_end)
+    fy = d.year + 1 if d.month >= 4 else d.year
+    return f"FY{fy % 100:02d}"
+
+
+def make_year_labels(period_ends: Sequence[Any]) -> list[str]:
+    """Unique labels for a list of period ends (a duplicate gets a '-2' style suffix)."""
+    labels: list[str] = []
+    seen: dict[str, int] = {}
+    for p in period_ends:
+        base = fy_label(p)
+        seen[base] = seen.get(base, 0) + 1
+        labels.append(base if seen[base] == 1 else f"{base}-{seen[base]}")
+    return labels
+
+
+def build_grid(values: dict[str, Sequence[float]], years: Sequence[str]) -> pd.DataFrame:
+    """The canonical grid: Line_ID, Line_Item_Name, Category, then one float column per year. Missing lines become 0.0."""
+    ylist = [str(y) for y in years]
+    frame: dict[str, list] = {
+        "Line_ID": [s[0] for s in SCHEMA],
+        "Line_Item_Name": [s[1] for s in SCHEMA],
+        "Category": [s[2] for s in SCHEMA],
+    }
+    for j, yr in enumerate(ylist):
+        col: list[float] = []
+        for lid, _name, _cat in SCHEMA:
+            v = 0.0
+            if lid in values:
+                try:
+                    v = float(values[lid][j])
+                except (TypeError, ValueError, IndexError):
+                    v = 0.0
+            col.append(v if np.isfinite(v) else 0.0)
+        frame[yr] = col
+    return pd.DataFrame(frame)
+
+
+def _resolve_years(df: pd.DataFrame, years: Sequence[str] | None) -> list[str]:
+    if years is not None:
+        ylist = [str(y).strip() for y in years]
+    else:
+        ylist = [str(c).strip() for c in df.columns if str(c).strip() not in META_COLS]
+    if not ylist:
+        raise ValueError("No fiscal-year columns were found in the statement.")
+    return ylist
 
 
 # --------------------------------------------------------------------------------------
@@ -75,9 +123,9 @@ def _safe_div(num: Any, den: Any, fill: float = 0.0, positive_only: bool = True)
     return np.where(mask, n / safe_d, fill)
 
 
-def _cagr_pct(start: float, end: float, periods: int = 2) -> float:
-    """(end/start)**(1/periods) - 1 in %, NaN when either endpoint is non-positive."""
-    if start > 0 and end > 0:
+def _cagr_pct(start: float, end: float, periods: int) -> float:
+    """(end/start)**(1/periods) - 1 in %, NaN when either endpoint is non-positive or there is only one period."""
+    if periods >= 1 and start > 0 and end > 0:
         return float(((end / start) ** (1.0 / periods) - 1.0) * 100.0)
     return float("nan")
 
@@ -166,7 +214,11 @@ def _receipt_frames(
 # --------------------------------------------------------------------------------------
 # 1. Hygiene pipeline
 # --------------------------------------------------------------------------------------
-def sanitize_statement_df(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
+def sanitize_statement_df(raw_df: pd.DataFrame, years: Sequence[str] | None = None) -> tuple[pd.DataFrame, dict]:
+    """Clean a statement grid: normalise Line_IDs, strip currency text, fix negatives, impute blanks as 0.0 and log every repair.
+
+    Returns (clean DataFrame indexed by Line_ID with Line_Item_Name, Category and the year columns, hygiene audit dict).
+    """
     if not isinstance(raw_df, pd.DataFrame):
         raise TypeError("raw_df must be a pandas DataFrame.")
 
@@ -174,16 +226,19 @@ def sanitize_statement_df(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     if "Line_ID" not in [str(c).strip() for c in df.columns] and str(df.index.name).strip() == "Line_ID":
         df = df.reset_index()
 
-    canon = {c.lower(): c for c in ["Line_ID", "Line_Item_Name", "Category"] + YEARS}
+    canon = {c.lower(): c for c in META_COLS}
     df.columns = [canon.get(str(c).strip().lower().replace(" ", "_"), str(c).strip()) for c in df.columns]
+    if "Line_ID" not in df.columns:
+        raise ValueError("Input is missing the required column: Line_ID")
 
-    missing_cols = [c for c in ["Line_ID"] + YEARS if c not in df.columns]
+    ylist = _resolve_years(df, years)
+    missing_cols = [c for c in ylist if c not in df.columns]
     if missing_cols:
-        raise ValueError(f"Input is missing required columns: {missing_cols}")
+        raise ValueError(f"Input is missing year columns: {missing_cols}")
     for meta in ("Line_Item_Name", "Category"):
         if meta not in df.columns:
             df[meta] = np.nan
-    df = df[["Line_ID", "Line_Item_Name", "Category"] + YEARS].reset_index(drop=True)
+    df = df[META_COLS + ylist].reset_index(drop=True)
 
     log: list[str] = []
     repaired = 0
@@ -212,7 +267,7 @@ def sanitize_statement_df(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     # ---- Numeric coercion ------------------------------------------------------------
     id_arr = norm_ids.to_numpy()
-    for yr in YEARS:
+    for yr in ylist:
         col = df[yr]
         direct = pd.to_numeric(col, errors="coerce")
         direct_arr = direct.to_numpy(dtype="float64")
@@ -263,30 +318,31 @@ def sanitize_statement_df(raw_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
                 "Line_ID": absent,
                 "Line_Item_Name": [SCHEMA_NAMES[k] for k in absent],
                 "Category": [SCHEMA_CATEGORIES[k] for k in absent],
-                **{yr: np.zeros(len(absent), dtype="float64") for yr in YEARS},
+                **{yr: np.zeros(len(absent), dtype="float64") for yr in ylist},
             }
         )
         df = pd.concat([df, add], ignore_index=True)
-        repaired += len(absent) * (1 + len(YEARS))
+        repaired += len(absent) * (1 + len(ylist))
         for k in absent:
             log.append(f"Line_ID '{k}' absent from input: inserted with 0.0 for all fiscal years.")
 
-    clean = df.set_index("Line_ID").loc[REQUIRED_IDS]
+    clean = df.set_index("Line_ID").loc[REQUIRED_IDS].copy()
     clean.index.name = "Line_ID"
-    for yr in YEARS:
+    for yr in ylist:
         clean[yr] = clean[yr].astype("float64")
 
-    total_cells = len(REQUIRED_IDS) * (1 + len(YEARS))
+    total_cells = len(REQUIRED_IDS) * (1 + len(ylist))
     audit = {
         "total_cells": int(total_cells),
         "cells_repaired": int(repaired),
         "repair_pct": round(float(repaired) / total_cells * 100.0, 2),
         "repair_log": log,
+        "years": list(ylist),
     }
     return clean, audit
 
 
-def _extract_inputs(clean_df: pd.DataFrame) -> pd.DataFrame:
+def _extract_inputs(clean_df: pd.DataFrame, ylist: list[str]) -> pd.DataFrame:
     df = clean_df.copy()
     if "Line_ID" in df.columns:
         df = df.set_index("Line_ID")
@@ -295,19 +351,38 @@ def _extract_inputs(clean_df: pd.DataFrame) -> pd.DataFrame:
     missing_ids = [k for k in REQUIRED_IDS if k not in df.index]
     if missing_ids:
         raise ValueError(f"clean_df is missing required Line_IDs: {missing_ids}")
-    missing_years = [y for y in YEARS if y not in df.columns]
+    missing_years = [y for y in ylist if y not in df.columns]
     if missing_years:
         raise ValueError(f"clean_df is missing fiscal-year columns: {missing_years}")
-    num = df.loc[REQUIRED_IDS, YEARS].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    num = df.loc[REQUIRED_IDS, ylist].apply(pd.to_numeric, errors="coerce").fillna(0.0)
     return num.astype("float64")
+
+
+def _as_adj(attr_adj: Sequence[float] | None, n: int) -> np.ndarray:
+    if attr_adj is None:
+        return np.zeros(n, dtype="float64")
+    arr = np.nan_to_num(np.asarray(list(attr_adj), dtype="float64"), nan=0.0)
+    if arr.shape[0] != n:
+        raise ValueError(f"attr_adj has {arr.shape[0]} values but the statement has {n} years.")
+    return arr
 
 
 # --------------------------------------------------------------------------------------
 # 2. Anatomy, VAS and KPIs
 # --------------------------------------------------------------------------------------
-def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
-    inputs = _extract_inputs(clean_df)
-    x = {k: inputs.loc[k, YEARS].to_numpy(dtype="float64") for k in REQUIRED_IDS}
+def compute_corporate_anatomy_and_vas(
+    clean_df: pd.DataFrame, years: Sequence[str] | None = None, attr_adj: Sequence[float] | None = None
+) -> dict:
+    """P&L ladder, common-size ₹100 receipt, value-added statement and KPIs for every year in `years`.
+
+    attr_adj: optional per-year gap = (PBT - Tax) - reported profit attributable to shareholders (minority interest,
+    associates and other items). When given, ROE uses attributable profit while tax and retained earnings stay as reported.
+    """
+    ylist = _resolve_years(clean_df, years)
+    n = len(ylist)
+    inputs = _extract_inputs(clean_df, ylist)
+    x = {k: inputs.loc[k, ylist].to_numpy(dtype="float64") for k in REQUIRED_IDS}
+    adj = _as_adj(attr_adj, n)
 
     lad = _ladder(
         x["REV_OPS"], x["REV_OTH"], x["COGS_MAT"], x["OPEX_EXT"], x["EMP_COST"],
@@ -317,6 +392,7 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
         lad["Total_Income"], lad["GVA"], lad["EBITDA"], lad["EBIT"], lad["PBT"],
         lad["PAT"], lad["Retained_Earnings"],
     )
+    pat_attr = pat - adj
 
     pnl = pd.DataFrame(
         {
@@ -333,11 +409,13 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
             "PBT": pbt,
             "Tax_Expense": x["TAX_EXP"],
             "PAT": pat,
+            "Minority_Associates_Adj": adj,
+            "PAT_Attributable": pat_attr,
             "Dividends_Paid": x["DIV_PAID"],
             "Retained_Earnings": re_,
             "NVA": lad["NVA"],
         },
-        index=YEARS,
+        index=ylist,
     ).T
 
     # ---- Common-size ₹100 receipt ----------------------------------------------------
@@ -347,7 +425,7 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
             x["FIN_COST"], x["TAX_EXP"], x["DIV_PAID"], re_,
         ),
         ti,
-        YEARS,
+        ylist,
     )
 
     # ---- Value-Added Statement -------------------------------------------------------
@@ -357,39 +435,42 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
     closure_by_year = np.abs(residual) < 1e-4
     pct_mat = _safe_div(stake_mat, gva) * 100.0
 
-    vas_abs = pd.DataFrame(stake_mat, index=STAKEHOLDER_LABELS, columns=YEARS)
-    vas_pct = pd.DataFrame(pct_mat, index=STAKEHOLDER_LABELS, columns=YEARS)
+    vas_abs = pd.DataFrame(stake_mat, index=STAKEHOLDER_LABELS, columns=ylist)
+    vas_pct = pd.DataFrame(pct_mat, index=STAKEHOLDER_LABELS, columns=ylist)
     vas_long = pd.DataFrame(
         {
-            "Year": np.tile(YEARS, len(STAKEHOLDER_LABELS)),
-            "Stakeholder": np.repeat(STAKEHOLDER_LABELS, len(YEARS)),
+            "Year": np.tile(ylist, len(STAKEHOLDER_LABELS)),
+            "Stakeholder": np.repeat(STAKEHOLDER_LABELS, len(ylist)),
             "Amount_Cr": vas_abs.to_numpy().ravel(),
             "Pct_of_GVA": vas_pct.to_numpy().ravel(),
         }
     )
 
     # ---- Strategic & credit KPIs -----------------------------------------------------
-    debt, equity, fin, hc = x["TOTAL_DEBT"], x["TOTAL_EQUITY"], x["FIN_COST"], x["HEADCOUNT"]
+    debt, equity, fin, hc, emp = x["TOTAL_DEBT"], x["TOTAL_EQUITY"], x["FIN_COST"], x["HEADCOUNT"], x["EMP_COST"]
     capital_employed = debt + equity
     roce = _safe_div(ebit, capital_employed) * 100.0
     cost_of_debt = np.where(debt > 0, fin / np.where(debt > 0, debt, 1.0) * 100.0, 0.0)
     icr = np.where(fin > 0, ebit / np.where(fin > 0, fin, 1.0), 999.0)
     spread = roce - cost_of_debt
     debt_to_ebitda = np.where(ebitda > 0, debt / np.where(ebitda > 0, ebitda, 1.0), np.where(debt > 0, 999.0, 0.0))
+    va_per_emp = np.where(hc > 0, gva * 100.0 / np.where(hc > 0, hc, 1.0), np.nan)
+    cost_per_emp = np.where((hc > 0) & (emp > 0), emp * 100.0 / np.where(hc > 0, hc, 1.0), np.nan)
+    hc_roi = np.where(emp > 0, x["REV_OPS"] / np.where(emp > 0, emp, 1.0), np.nan)
 
     kpis = pd.DataFrame(
         {
             "Bought_In_Costs_Pct": _safe_div(lad["Bought_In_Costs"], ti) * 100.0,
-            "Labor_Share_of_GVA_Pct": _safe_div(x["EMP_COST"], gva) * 100.0,
+            "Labor_Share_of_GVA_Pct": _safe_div(emp, gva) * 100.0,
             "GVA_Margin_Pct": _safe_div(gva, ti) * 100.0,
             "EBITDA_Margin_Pct": _safe_div(ebitda, ti) * 100.0,
             "PAT_Margin_Pct": _safe_div(pat, ti) * 100.0,
-            "Human_Capital_ROI": _safe_div(x["REV_OPS"], x["EMP_COST"]),
-            "Value_Added_Per_Emp_Lakhs": _safe_div(gva * 100.0, hc),
-            "Avg_Cost_Per_Emp_Lakhs": _safe_div(x["EMP_COST"] * 100.0, hc),
+            "Human_Capital_ROI": hc_roi,
+            "Value_Added_Per_Emp_Lakhs": va_per_emp,
+            "Avg_Cost_Per_Emp_Lakhs": cost_per_emp,
             "Capital_Employed": capital_employed,
             "ROCE_Pct": roce,
-            "ROE_Pct": _safe_div(pat, equity) * 100.0,
+            "ROE_Pct": _safe_div(pat_attr, equity) * 100.0,
             "Implied_Cost_of_Debt_Pct": cost_of_debt,
             "Economic_Spread_Pct": spread,
             "EVA_Spread_Proxy_Cr": spread / 100.0 * capital_employed,
@@ -398,21 +479,26 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
             "Effective_Tax_Rate_Pct": _safe_div(x["TAX_EXP"], pbt) * 100.0,
             "Value_Retention_Ratio_Pct": _safe_div(re_ + x["DEP_AMORT"], gva) * 100.0,
         },
-        index=YEARS,
+        index=ylist,
     ).T
 
+    periods = max(n - 1, 0)
     cagr = {
-        "Revenue_CAGR_Pct": _cagr_pct(x["REV_OPS"][0], x["REV_OPS"][2]),
-        "Total_Income_CAGR_Pct": _cagr_pct(ti[0], ti[2]),
-        "GVA_CAGR_Pct": _cagr_pct(gva[0], gva[2]),
-        "EMP_COST_CAGR_Pct": _cagr_pct(x["EMP_COST"][0], x["EMP_COST"][2]),
-        "PAT_CAGR_Pct": _cagr_pct(pat[0], pat[2]),
+        "Revenue_CAGR_Pct": _cagr_pct(x["REV_OPS"][0], x["REV_OPS"][-1], periods),
+        "Total_Income_CAGR_Pct": _cagr_pct(ti[0], ti[-1], periods),
+        "GVA_CAGR_Pct": _cagr_pct(gva[0], gva[-1], periods),
+        "EMP_COST_CAGR_Pct": _cagr_pct(emp[0], emp[-1], periods),
+        "PAT_CAGR_Pct": _cagr_pct(pat[0], pat[-1], periods),
+        "PAT_Attr_CAGR_Pct": _cagr_pct(pat_attr[0], pat_attr[-1], periods),
     }
 
     return {
-        "years": list(YEARS),
+        "years": list(ylist),
+        "n_years": n,
         "inputs": inputs,
         "pnl": pnl,
+        "pat_attr": pd.Series(pat_attr, index=ylist),
+        "attr_adj": adj,
         "common_size": receipt["rupees"],
         "common_size_exact": receipt["exact"],
         "common_size_paise": receipt["paise"],
@@ -426,8 +512,8 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
         "vas_abs": vas_abs,
         "vas_pct": vas_pct,
         "vas_long": vas_long,
-        "vas_residual": dict(zip(YEARS, residual.astype(float).tolist())),
-        "vas_closure_by_year": dict(zip(YEARS, [bool(v) for v in closure_by_year])),
+        "vas_residual": dict(zip(ylist, residual.astype(float).tolist())),
+        "vas_closure_by_year": dict(zip(ylist, [bool(v) for v in closure_by_year])),
         "vas_closure_check": bool(np.all(closure_by_year)),
         "kpis": kpis,
         "cagr": cagr,
@@ -437,7 +523,7 @@ def compute_corporate_anatomy_and_vas(clean_df: pd.DataFrame) -> dict:
 # --------------------------------------------------------------------------------------
 # 3. Deterministic rule-based diagnostics
 # --------------------------------------------------------------------------------------
-def _cr(v: float) -> str:
+def _fmt_cr(v: float) -> str:
     return f"₹{v:,.0f} Cr"
 
 
@@ -446,72 +532,90 @@ def _xfmt(v: float) -> str:
 
 
 def generate_deterministic_diagnostics(results: dict) -> list[dict]:
+    """Four executive cards (title, badge_text, severity, narrative). severity is one of positive / warning / danger / info."""
     k, inp, pnl, cagr = results["kpis"], results["inputs"], results["pnl"], results["cagr"]
+    ys = results["years"]
+    first, last, n = ys[0], ys[-1], len(ys)
 
-    def kv(name: str, yr: str = "FY26") -> float:
-        return float(k.loc[name, yr])
+    def kv(name: str, yr: str | None = None) -> float:
+        return float(k.loc[name, yr or last])
 
     cards: list[dict] = []
+    emp_last = float(inp.loc["EMP_COST", last])
+    emp_rep = emp_last > 0
 
     # ---- 1) Value Creation Archetype -------------------------------------------------
     bic, lab, gva_m = kv("Bought_In_Costs_Pct"), kv("Labor_Share_of_GVA_Pct"), kv("GVA_Margin_Pct")
-    gva26 = float(pnl.loc["GVA", "FY26"])
-    if gva26 <= 0:
+    gva_last = float(pnl.loc["GVA", last])
+    lab_txt = f" Labor takes {lab:.1f}% of that GVA." if emp_rep else ""
+    if gva_last <= 0:
         title, badge, sev = "Value Creation Archetype", "Value Destruction", "danger"
         text = (
-            f"FY26 Gross Value Added is {_cr(gva26)}: bought-in costs absorb {bic:.1f}% of total income, "
+            f"{last} Gross Value Added is {_fmt_cr(gva_last)}: bought-in costs absorb {bic:.1f}% of total income, "
             "so the enterprise creates no distributable value after paying suppliers."
         )
     elif bic >= 85.0:
         title, badge, sev = "Value Creation Archetype", "Thin-Spread Platform", "warning"
         text = (
-            f"Bought-in costs absorb {bic:.1f}% of FY26 total income, leaving a GVA margin of only {gva_m:.1f}%. "
-            f"Labor takes {lab:.1f}% of that GVA. This is a high-throughput, thin-spread model where small "
-            "leakages in vendor, logistics or promotion spend move profit disproportionately."
+            f"Bought-in costs absorb {bic:.1f}% of {last} total income, leaving a GVA margin of only {gva_m:.1f}%.{lab_txt} "
+            "This is a high-throughput, thin-spread model where small leakages in vendor, logistics or promotion spend "
+            "move profit disproportionately."
         )
     elif bic >= 70.0:
         title, badge, sev = "Value Creation Archetype", "Supply-Chain Intensive", "warning"
         text = (
-            f"Bought-in costs consume {bic:.1f}% of FY26 total income (GVA margin {gva_m:.1f}%), and the workforce "
-            f"captures {lab:.1f}% of GVA. Value is created through procurement, scale and asset utilization, "
-            "so margins are most exposed to raw-material and freight inflation."
+            f"Bought-in costs consume {bic:.1f}% of {last} total income (GVA margin {gva_m:.1f}%)."
+            + (f" The workforce captures {lab:.1f}% of GVA." if emp_rep else "")
+            + " Value is created through procurement, scale and asset utilization, so margins are most exposed to "
+            "raw-material and freight inflation."
+        )
+    elif not emp_rep:
+        title, badge, sev = "Value Creation Archetype", "Workforce Cost Not Reported", "info"
+        text = (
+            f"Bought-in costs are {bic:.1f}% of {last} total income (GVA margin {gva_m:.1f}%). Employee cost is not reported in the "
+            "source data, so the workforce share of value added cannot be assessed and the archetype cannot be classified further."
         )
     elif lab >= 50.0:
         title, badge = "Value Creation Archetype", "Human-Capital Intensive"
         sev = "warning" if lab >= 75.0 else "info"
         text = (
-            f"The workforce takes {lab:.1f}% of FY26 GVA while bought-in costs are only {bic:.1f}% of income "
+            f"The workforce takes {lab:.1f}% of {last} GVA while bought-in costs are only {bic:.1f}% of income "
             f"(GVA margin {gva_m:.1f}%). Value is created by people, so wage inflation, attrition and "
             "utilization are the primary margin risks."
         )
     elif bic < 70.0 and lab < 35.0:
         title, badge, sev = "Value Creation Archetype", "Brand / Franchise Compounder", "positive"
         text = (
-            f"Bought-in costs consume {bic:.1f}% of FY26 income, leaving a {gva_m:.1f}% GVA margin, and the workforce "
+            f"Bought-in costs consume {bic:.1f}% of {last} income, leaving a {gva_m:.1f}% GVA margin, and the workforce "
             f"takes only {lab:.1f}% of that pool. Most value accrues to the state, capital providers and reinvestment."
         )
     else:
         title, badge, sev = "Value Creation Archetype", "Balanced Value Chain", "info"
         text = (
-            f"Bought-in costs are {bic:.1f}% of FY26 income (GVA margin {gva_m:.1f}%) and labor share of GVA is "
+            f"Bought-in costs are {bic:.1f}% of {last} income (GVA margin {gva_m:.1f}%) and labor share of GVA is "
             f"{lab:.1f}%, a balanced mix of supplier, workforce and capital contribution."
         )
     cards.append({"title": title, "badge_text": badge, "severity": sev, "narrative": text})
 
     # ---- 2) Labor vs Capital Drift ---------------------------------------------------
-    emp24, emp26 = float(inp.loc["EMP_COST", "FY24"]), float(inp.loc["EMP_COST", "FY26"])
-    pat24, pat26 = float(pnl.loc["PAT", "FY24"]), float(pnl.loc["PAT", "FY26"])
-    lab24 = kv("Labor_Share_of_GVA_Pct", "FY24")
-    title = "3-Year Labor vs. Capital Drift"
-    if emp24 <= 0 or emp26 <= 0:
-        badge, sev = "Insufficient Workforce Data", "info"
-        text = "Employee cost is not reported for FY24 or FY26, so labor-versus-profit drift cannot be computed."
-    elif pat24 > 0 and pat26 > 0:
+    emp_first = float(inp.loc["EMP_COST", first])
+    pat_first, pat_last = float(pnl.loc["PAT", first]), float(pnl.loc["PAT", last])
+    lab_first = kv("Labor_Share_of_GVA_Pct", first)
+    title = f"{n}-Year Labor vs. Capital Drift"
+    span = f"{first} to {last}"
+    if n < 2:
+        badge, sev = "Insufficient History", "info"
+        text = "At least two annual periods are needed to compare labor cost growth with profit growth."
+    elif emp_first <= 0 or emp_last <= 0:
+        badge, sev = "Employee Cost Not Reported", "info"
+        text = (f"Employee cost is not reported for {first} or {last} in the source data, so labor-versus-profit drift "
+                "cannot be computed.")
+    elif pat_first > 0 and pat_last > 0:
         emp_g, pat_g = cagr["EMP_COST_CAGR_Pct"], cagr["PAT_CAGR_Pct"]
         gap = emp_g - pat_g
         base = (
-            f"Employee cost compounded at {emp_g:.1f}% a year versus {pat_g:.1f}% for PAT (FY24 to FY26); "
-            f"labor share of GVA moved from {lab24:.1f}% to {lab:.1f}%."
+            f"Employee cost compounded at {emp_g:.1f}% a year versus {pat_g:.1f}% for PAT ({span}); "
+            f"labor share of GVA moved from {lab_first:.1f}% to {lab:.1f}%."
         )
         if gap > 15.0:
             badge, sev = "Labor Outpacing Profit", "danger"
@@ -525,44 +629,44 @@ def generate_deterministic_diagnostics(results: dict) -> list[dict]:
         else:
             badge, sev = "Balanced Drift", "info"
             text = base + " Labor and capital returns are growing in step."
-    elif pat24 <= 0 < pat26:
+    elif pat_first <= 0 < pat_last:
         emp_g = cagr["EMP_COST_CAGR_Pct"]
         badge, sev = "Profit Turnaround", "positive"
         text = (
-            f"PAT swung from {_cr(pat24)} in FY24 to {_cr(pat26)} in FY26 while employee cost compounded at "
-            f"{emp_g:.1f}% a year. Labor share of GVA moved from {lab24:.1f}% to {lab:.1f}%, "
+            f"PAT swung from {_fmt_cr(pat_first)} in {first} to {_fmt_cr(pat_last)} in {last} while employee cost compounded at "
+            f"{emp_g:.1f}% a year. Labor share of GVA moved from {lab_first:.1f}% to {lab:.1f}%, "
             "showing scale is being absorbed into profit."
         )
-    elif pat24 > 0 >= pat26:
+    elif pat_first > 0 >= pat_last:
         badge, sev = "Profit Erosion", "danger"
         text = (
-            f"PAT fell from {_cr(pat24)} in FY24 to {_cr(pat26)} in FY26 while employee cost rose from "
-            f"{_cr(emp24)} to {_cr(emp26)}: labor cost growth has not been backed by profit."
+            f"PAT fell from {_fmt_cr(pat_first)} in {first} to {_fmt_cr(pat_last)} in {last} while employee cost moved from "
+            f"{_fmt_cr(emp_first)} to {_fmt_cr(emp_last)}: labor cost growth has not been backed by profit."
         )
-    elif pat26 > pat24:
+    elif pat_last > pat_first:
         badge, sev = "Losses Narrowing", "warning"
         text = (
-            f"PAT improved from {_cr(pat24)} to {_cr(pat26)} but remains non-positive, "
-            f"with employee cost at {_cr(emp26)} ({lab:.1f}% of GVA)."
+            f"PAT improved from {_fmt_cr(pat_first)} to {_fmt_cr(pat_last)} but remains non-positive, "
+            f"with employee cost at {_fmt_cr(emp_last)} ({lab:.1f}% of GVA)."
         )
     else:
         badge, sev = "Persistent Losses", "danger"
         text = (
-            f"PAT stands at {_cr(pat26)} in FY26 versus {_cr(pat24)} in FY24 with employee cost at "
-            f"{_cr(emp26)}; the cost base is not being covered by value added."
+            f"PAT stands at {_fmt_cr(pat_last)} in {last} versus {_fmt_cr(pat_first)} in {first} with employee cost at "
+            f"{_fmt_cr(emp_last)}; the cost base is not being covered by value added."
         )
     cards.append({"title": title, "badge_text": badge, "severity": sev, "narrative": text})
 
     # ---- 3) Capital Efficiency & Economic Spread -------------------------------------
     roce, cod = kv("ROCE_Pct"), kv("Implied_Cost_of_Debt_Pct")
-    roce24, roe = kv("ROCE_Pct", "FY24"), kv("ROE_Pct")
-    debt26 = float(inp.loc["TOTAL_DEBT", "FY26"])
-    ce26 = kv("Capital_Employed")
-    debt_share = debt26 / ce26 * 100.0 if ce26 > 0 else 0.0
+    roce_first, roe = kv("ROCE_Pct", first), kv("ROE_Pct")
+    debt_last = float(inp.loc["TOTAL_DEBT", last])
+    ce_last = kv("Capital_Employed")
+    debt_share = debt_last / ce_last * 100.0 if ce_last > 0 else 0.0
     spread = roce - cod
     title = "Capital Efficiency & Economic Spread"
-    trend = f"ROCE moved from {roce24:.1f}% in FY24 to {roce:.1f}% in FY26 (ROE {roe:.1f}%)."
-    if debt26 <= 0 or debt_share < 5.0:
+    trend = f"ROCE moved from {roce_first:.1f}% in {first} to {roce:.1f}% in {last} (ROE {roe:.1f}%)."
+    if debt_last <= 0 or debt_share < 5.0:
         if roce >= 15.0:
             badge, sev = "Equity-Funded Capital Engine", "positive"
             text = (
@@ -603,16 +707,16 @@ def generate_deterministic_diagnostics(results: dict) -> list[dict]:
 
     # ---- 4) Credit & Solvency Cushion ------------------------------------------------
     icr, d_ebitda = kv("Interest_Coverage_Ratio"), kv("Debt_to_EBITDA")
-    ebitda26 = float(pnl.loc["EBITDA", "FY26"])
-    fin26 = float(inp.loc["FIN_COST", "FY26"])
+    ebitda_last = float(pnl.loc["EBITDA", last])
+    fin_last = float(inp.loc["FIN_COST", last])
     title = "Credit & Solvency Cushion"
-    metrics = f"Interest coverage is {_xfmt(icr)} and Debt/EBITDA is {d_ebitda:.2f}x on {_cr(debt26)} of borrowings."
-    if debt26 <= 0 and fin26 <= 0:
+    metrics = f"Interest coverage is {_xfmt(icr)} and Debt/EBITDA is {d_ebitda:.2f}x on {_fmt_cr(debt_last)} of borrowings."
+    if debt_last <= 0 and fin_last <= 0:
         badge, sev = "Debt-Free Fortress", "positive"
-        text = "FY26 shows no borrowings and no finance cost, so there is no creditor claim on operating cash flow."
-    elif ebitda26 <= 0:
+        text = f"{last} shows no borrowings and no finance cost, so there is no creditor claim on operating cash flow."
+    elif ebitda_last <= 0:
         badge, sev = "No Cash Earnings to Service Debt", "danger"
-        text = f"FY26 EBITDA is {_cr(ebitda26)} against {_cr(debt26)} of borrowings. {metrics} Debt service depends on external funding."
+        text = f"{last} EBITDA is {_fmt_cr(ebitda_last)} against {_fmt_cr(debt_last)} of borrowings. {metrics} Debt service depends on external funding."
     elif d_ebitda < 0.5 and icr >= 20.0:
         badge, sev = "Fortress Balance Sheet", "positive"
         text = f"{metrics} Debt could be repaid from under six months of EBITDA; solvency is not a constraint."
@@ -634,10 +738,11 @@ def generate_deterministic_diagnostics(results: dict) -> list[dict]:
 
 
 # --------------------------------------------------------------------------------------
-# 4. Macro & inflation pass-through stress test
+# 4. Macro & inflation pass-through stress test (applied to the LATEST year)
 # --------------------------------------------------------------------------------------
-def _scenario_metrics(lad, rev_ops, fin, tax, equity) -> dict[str, float]:
+def _scenario_metrics(lad, rev_ops, fin, tax, equity, adj) -> dict[str, float]:
     ti = lad["Total_Income"]
+    pat_attr = lad["PAT"] - adj
     raw = {
         "Revenue_from_Operations": rev_ops,
         "Total_Income": ti,
@@ -648,11 +753,12 @@ def _scenario_metrics(lad, rev_ops, fin, tax, equity) -> dict[str, float]:
         "PBT": lad["PBT"],
         "Tax_Expense": tax,
         "PAT": lad["PAT"],
+        "PAT_Attributable": pat_attr,
         "Retained_Earnings": lad["Retained_Earnings"],
         "GVA_Margin_Pct": _safe_div(lad["GVA"], ti) * 100.0,
         "EBITDA_Margin_Pct": _safe_div(lad["EBITDA"], ti) * 100.0,
         "PAT_Margin_Pct": _safe_div(lad["PAT"], ti) * 100.0,
-        "ROE_Pct": _safe_div(lad["PAT"], equity) * 100.0,
+        "ROE_Pct": _safe_div(pat_attr, equity) * 100.0,
         "Interest_Coverage_Ratio": _safe_div(lad["EBIT"], fin, fill=999.0),
     }
     return {name: float(np.asarray(v, dtype="float64").reshape(-1)[0]) for name, v in raw.items()}
@@ -665,7 +771,10 @@ def simulate_margin_shock(
     rate_shock_bps: float,
     price_passthrough_pct: float,
 ) -> dict:
-    base = results["inputs"]["FY26"]
+    """One-period static what-if on the latest year. The minority/associates adjustment is held at its latest-year value."""
+    last = results["years"][-1]
+    base = results["inputs"][last]
+    adj = np.array([float(results["attr_adj"][-1])], dtype="float64")
 
     def a(name: str) -> np.ndarray:
         return np.array([float(base[name])], dtype="float64")
@@ -674,7 +783,7 @@ def simulate_margin_shock(
     emp, dep, fin, tax = a("EMP_COST"), a("DEP_AMORT"), a("FIN_COST"), a("TAX_EXP")
     div, debt, equity = a("DIV_PAID"), a("TOTAL_DEBT"), a("TOTAL_EQUITY")
 
-    base_tax_rate = float(results["kpis"].loc["Effective_Tax_Rate_Pct", "FY26"]) / 100.0
+    base_tax_rate = float(results["kpis"].loc["Effective_Tax_Rate_Pct", last]) / 100.0
 
     delta_cogs = cogs * (float(mat_inflation_pct) / 100.0)
     delta_emp = emp * (float(wage_hike_pct) / 100.0)
@@ -690,21 +799,23 @@ def simulate_margin_shock(
     sim_tax = np.where(pre_tax["PBT"] > 0, pre_tax["PBT"] * base_tax_rate, 0.0)
     sim_lad = _ladder(sim_rev_ops, rev_oth, sim_cogs, opex, sim_emp, dep, sim_fin, sim_tax, div)
 
-    base_m = _scenario_metrics(base_lad, rev_ops, fin, tax, equity)
-    sim_m = _scenario_metrics(sim_lad, sim_rev_ops, sim_fin, sim_tax, equity)
+    base_m = _scenario_metrics(base_lad, rev_ops, fin, tax, equity, adj)
+    sim_m = _scenario_metrics(sim_lad, sim_rev_ops, sim_fin, sim_tax, equity, adj)
 
     names = list(base_m.keys())
-    b_vals = np.array([base_m[n] for n in names], dtype="float64")
-    s_vals = np.array([sim_m[n] for n in names], dtype="float64")
+    b_vals = np.array([base_m[nm] for nm in names], dtype="float64")
+    s_vals = np.array([sim_m[nm] for nm in names], dtype="float64")
     change = s_vals - b_vals
-    is_money = np.array([n in _MONEY_METRICS for n in names])
+    is_money = np.array([nm in _MONEY_METRICS for nm in names])
     change_pct = np.where(is_money, _safe_div(change, np.abs(b_vals)) * 100.0, np.nan)
     comparison = pd.DataFrame(
-        {"Baseline_FY26": b_vals, "Simulated_FY26": s_vals, "Change": change, "Change_Pct": change_pct},
+        {"Baseline": b_vals, "Simulated": s_vals, "Change": change, "Change_Pct": change_pct},
         index=names,
     )
 
-    pair = lambda b, s: np.concatenate([b, s])  # noqa: E731
+    def pair(b: np.ndarray, s: np.ndarray) -> np.ndarray:
+        return np.concatenate([b, s])
+
     receipt = _receipt_frames(
         _receipt_components(
             pair(cogs, sim_cogs), pair(opex, opex), pair(emp, sim_emp), pair(dep, dep),
@@ -712,26 +823,25 @@ def simulate_margin_shock(
             pair(base_lad["Retained_Earnings"], sim_lad["Retained_Earnings"]),
         ),
         pair(base_lad["Total_Income"], sim_lad["Total_Income"]),
-        ["Baseline_FY26", "Simulated_FY26"],
+        ["Baseline", "Simulated"],
     )
     receipt_df = receipt["rupees"].copy()
-    receipt_df["Change"] = receipt_df["Simulated_FY26"] - receipt_df["Baseline_FY26"]
+    receipt_df["Change"] = receipt_df["Simulated"] - receipt_df["Baseline"]
 
     sim_stake_sum = float(
         (sim_emp + sim_fin + sim_tax + div + (sim_lad["Retained_Earnings"] + dep)).reshape(-1)[0]
     )
     sim_gva = float(sim_lad["GVA"].reshape(-1)[0])
-
-    rev_ops_f = float(rev_ops[0])
     breakeven = float(_safe_div(total_cost_inflation, rev_ops).reshape(-1)[0] * 100.0)
 
     return {
+        "base_year": last,
         "assumptions": {
             "mat_inflation_pct": float(mat_inflation_pct),
             "wage_hike_pct": float(wage_hike_pct),
             "rate_shock_bps": float(rate_shock_bps),
             "price_passthrough_pct": float(price_passthrough_pct),
-            "dividend_policy": "Held constant at FY26 baseline; shortfall is drawn from retained earnings.",
+            "dividend_policy": "Held constant at the latest-year baseline; any shortfall is drawn from retained earnings.",
             "baseline_effective_tax_rate_pct": base_tax_rate * 100.0,
         },
         "shocks": {
@@ -751,10 +861,9 @@ def simulate_margin_shock(
         "receipt": receipt_df,
         "receipt_paise": receipt["paise"],
         "receipt_check": {
-            "baseline_sum": receipt["sum_rounded"]["Baseline_FY26"],
-            "simulated_sum": receipt["sum_rounded"]["Simulated_FY26"],
+            "baseline_sum": receipt["sum_rounded"]["Baseline"],
+            "simulated_sum": receipt["sum_rounded"]["Simulated"],
             "all_ok": receipt["all_ok"],
         },
-        "simulated_revenue_ops": float(sim_rev_ops[0]) if rev_ops_f >= 0 else rev_ops_f,
         "vas_closure_check": bool(abs(sim_gva - sim_stake_sum) < 1e-4),
     }
