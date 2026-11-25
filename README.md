@@ -1,9 +1,9 @@
 <div align="center">
 
-# MEROS (μέρος) 🧾
+# MEROS (μέρος) 
 ### Corporate Value-Added Statement, Stakeholder Economics, DuPont & EVA Terminal
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://merosfin.streamlit.app)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://meros-app.streamlit.app/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Architecture: Modular v2](https://img.shields.io/badge/Architecture-MEROS%20v2-E5A93C)](https://github.com/dinudennyculas/MEROS)
@@ -14,7 +14,7 @@
 
 ---
 
-## 🌟 Core Philosophy: No Estimates, Full Auditability
+## Core Philosophy: No Estimates, Full Auditability
 
 Standard financial platforms view enterprises strictly through an equity-only lens. **MEROS** evaluates a corporation as a **value-creation and distribution engine** across five competing economic claimants—**Supply Chain & Vendors**, **Workforce**, **Lenders**, **The State (Exchequer)**, and **Equity & Reinvestment**—while enforcing strict accounting transparency:
 
@@ -24,7 +24,7 @@ Standard financial platforms view enterprises strictly through an equity-only le
 
 ---
 
-## 📊 Analytical Modules (6-Tab Interactive Terminal)
+## Analytical Modules (6-Tab Interactive Terminal)
 
 * **Tab 1 — ₹100 Consumer Anatomy ("Where Does Your Money Go?")**  
   Traces every ₹100 of customer spending from revenue through suppliers, workforce, depreciation, lenders, taxes, and shareholder retention via interactive waterfall charts and itemized thermal receipt vouchers.
@@ -45,7 +45,7 @@ Standard financial platforms view enterprises strictly through an equity-only le
 
 ---
 
-## 🚀 Data Ingestion & Live Excel Export
+## Data Ingestion & Live Excel Export
 
 * **Live NSE Directory & Yahoo Finance (`yfinance`):** Search 2,600+ NSE-listed equities via `data/EQUITY_L.csv` with automatic rename hints (e.g., `ZOMATO` → `ETERNAL`) and recent-listing checks.
 * **Screener.in `.xlsx` Parser:** Upload any Screener.in Excel export (Consolidated or Standalone) for up to 10 years of history. Automatically detects inventory-change sign conventions and runs a real cost check rebuilding `PBT` within ₹0.5 Cr.
@@ -54,7 +54,7 @@ Standard financial platforms view enterprises strictly through an equity-only le
 
 ---
 
-## 📂 Project Repository Structure
+## Project Repository Structure
 
 ```text
 MEROS/
@@ -81,7 +81,7 @@ MEROS/
 
 ---
 
-## ⚙️ Local Setup
+## Local Setup
 
 ```bash
 git clone [https://github.com/dinudennyculas/MEROS.git](https://github.com/dinudennyculas/MEROS.git)
@@ -92,6 +92,6 @@ streamlit run app.py
 
 ---
 
-## ⚠️ Disclaimer & Data Attribution
+## Disclaimer & Data Attribution
 
 MEROS is an **educational and academic financial analysis tool** built by Dinu Denny Culas. It is **not investment advice**, nor a recommendation to buy, sell, or hold any security. Live market statements are sourced via Yahoo Finance (`yfinance`), optional user-uploaded exports are parsed from Screener.in, and the NSE equity list (`EQUITY_L.csv`) is sourced from the National Stock Exchange of India. All third-party data remains the property of its respective providers.
